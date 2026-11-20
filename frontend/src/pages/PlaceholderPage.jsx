@@ -1,50 +1,118 @@
-import { ArrowUpRight, CircleDashed } from "lucide-react";
+import {
+  Activity,
+  ArrowRight,
+  BellRing,
+  Braces,
+  CircleDashed,
+  FlaskConical,
+  Gauge,
+  Settings2,
+  ShieldAlert,
+  Sparkles,
+} from "lucide-react";
+import { Button } from "../components/ui/button.jsx";
 
 const sectionDetails = {
   projects: {
-    eyebrow: "WORKSPACE / API PROJECTS",
-    title: "API Projects",
-    description: "Your connected API specifications will live here. Import is planned for Stage 2.",
+    title: "Projects",
+    description: "Connect API contracts and keep their quality work together.",
+    message: "No API projects yet",
+    detail: "Import an OpenAPI specification to create your first project. Project import is planned for Stage 2.",
+    icon: Braces,
+    canImport: true,
   },
-  testing: {
-    eyebrow: "WORKSPACE / API TESTING",
-    title: "API Testing",
-    description: "Generated and executed API checks are not part of Stage 1.",
+  explorer: {
+    title: "API Explorer",
+    description: "Browse API operations and inspect contract details.",
+    message: "An API definition is required",
+    detail: "The explorer will be available after OpenAPI specifications can be imported.",
+    icon: Braces,
+    canImport: true,
+  },
+  testRuns: {
+    title: "Test Runs",
+    description: "Review execution history and investigate failed checks.",
+    message: "No test executions",
+    detail: "ContractIQ does not run API tests in Stage 1. No test run history is being collected.",
+    icon: FlaskConical,
   },
   changes: {
-    eyebrow: "WORKSPACE / BREAKING CHANGES",
-    title: "Breaking Changes",
-    description: "Contract comparison will be introduced after the OpenAPI import foundation.",
+    title: "Contract Changes",
+    description: "Understand how API contract revisions affect consumers.",
+    message: "No contract comparisons",
+    detail: "Breaking-change detection will follow the OpenAPI import foundation.",
+    icon: ShieldAlert,
   },
   performance: {
-    eyebrow: "WORKSPACE / PERFORMANCE MONITORING",
-    title: "Performance Monitoring",
-    description: "No monitoring data is collected in Stage 1. This space is reserved for a later stage.",
+    title: "Performance",
+    description: "Monitor response latency and reliability over time.",
+    message: "No performance telemetry",
+    detail: "No API traffic is monitored in Stage 1, so there are no response measurements to display.",
+    icon: Gauge,
+  },
+  insights: {
+    title: "AI Insights",
+    description: "Surface actionable observations from API quality signals.",
+    message: "Insights are not active",
+    detail: "This Stage 1 foundation does not analyze API specifications or runtime data.",
+    icon: Sparkles,
+  },
+  alerts: {
+    title: "Alerts",
+    description: "Review reliability and contract notifications in one place.",
+    message: "No alerts to show",
+    detail: "Alerts will be generated when API monitoring and contract checks are implemented.",
+    icon: BellRing,
   },
   settings: {
-    eyebrow: "WORKSPACE / SETTINGS",
     title: "Settings",
-    description: "Workspace preferences and integrations will be configurable in a future stage.",
+    description: "Manage workspace preferences and service connections.",
+    message: "Workspace settings are coming later",
+    detail: "The current local development setup uses environment variables for backend configuration.",
+    icon: Settings2,
   },
 };
 
-export default function PlaceholderPage({ section }) {
-  const details = sectionDetails[section];
+export default function PlaceholderPage({ section, onImport }) {
+  const details = sectionDetails[section] ?? sectionDetails.projects;
+  const Icon = details.icon ?? Activity;
 
   return (
-    <section className="placeholder-page">
-      <p className="eyebrow"><span className="eyebrow-line" /> {details.eyebrow}</p>
-      <h1>{details.title}</h1>
-      <p className="placeholder-intro">{details.description}</p>
-      <div className="placeholder-state">
-        <span className="placeholder-icon"><CircleDashed size={23} strokeWidth={1.5} /></span>
+    <div className="placeholder-page">
+      <div className="page-heading-row">
         <div>
-          <p className="eyebrow">STAGE 1 FOUNDATION</p>
-          <h2>This area is not active yet</h2>
-          <p>ContractIQ is being built in stages. This view will become available when its foundation is implemented.</p>
+          <div className="page-breadcrumb"><span>Workspace</span><span className="breadcrumb-slash">/</span><strong>{details.title}</strong></div>
+          <h1>{details.title}</h1>
+          <p className="page-description">{details.description}</p>
         </div>
-        <span className="later-label">Planned <ArrowUpRight size={13} /></span>
+        {details.canImport && <Button className="import-button" onClick={onImport}>Import API specification <ArrowRight size={15} /></Button>}
       </div>
-    </section>
+
+      {section === "projects" && (
+        <div className="empty-table-panel">
+          <div className="table-toolbar">
+            <div className="table-toolbar-title"><strong>All projects</strong><span>API specifications connected to this workspace</span></div>
+            <span className="table-count">No projects</span>
+          </div>
+          <div className="table-scroll">
+            <table className="data-table projects-table">
+              <thead><tr><th>PROJECT</th><th>SPECIFICATION</th><th>LAST UPDATED</th><th>STATUS</th></tr></thead>
+              <tbody><tr><td className="table-empty" colSpan="4"><span className="table-empty-icon"><Braces size={17} /></span><strong>No API projects yet</strong><span>Imported specifications will appear in this list.</span></td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {section !== "projects" && (
+        <section className="module-empty-panel">
+          <div className="module-empty-icon"><Icon size={20} strokeWidth={1.7} /></div>
+          <p className="section-overline">STAGE 1 FOUNDATION</p>
+          <h2>{details.message}</h2>
+          <p>{details.detail}</p>
+          {details.canImport && <Button variant="secondary" size="sm" onClick={onImport}>Import a specification <ArrowRight size={14} /></Button>}
+          <span className="module-empty-mark"><CircleDashed size={94} strokeWidth={0.65} /></span>
+        </section>
+      )}
+    </div>
   );
 }

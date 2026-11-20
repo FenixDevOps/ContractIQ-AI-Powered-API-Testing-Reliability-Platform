@@ -2,7 +2,8 @@
 
 ## Components
 
-- **React + Vite frontend:** `frontend/src/App.jsx` owns page selection and the backend connection state. `Sidebar.jsx` handles section navigation; `Overview.jsx` and `PlaceholderPage.jsx` render the current and future-stage views.
+- **React + Vite frontend:** `frontend/src/App.jsx` owns page selection, the backend connection state, responsive navigation, and the searchable command palette. `Sidebar.jsx` handles grouped section navigation; `Overview.jsx` and `PlaceholderPage.jsx` render the overview and section-specific empty states.
+- **Design system:** Tailwind provides theme tokens, while local shadcn-style primitives in `components/ui` keep common controls consistent. Lucide supplies icons; Recharts renders the empty performance chart without synthetic points.
 - **API client:** `frontend/src/services/api.js` is the single place where the browser's backend URL and health request are defined.
 - **FastAPI backend:** `backend/app/main.py` creates the application, configures CORS, and registers the system routes. `config.py` reads environment settings. `routes/health.py` owns health and versioned application status.
 - **Tests:** `backend/tests/test_health.py` exercises endpoint contracts and the preflight response for the Vite origin.
@@ -33,4 +34,4 @@ The default backend origins are `http://localhost:5173` and `http://127.0.0.1:51
 
 ## Stage 1 Boundaries
 
-Only the health and metadata API routes are implemented. The dashboard's API Projects, API Testing, Breaking Changes, Performance Monitoring, and Settings areas communicate that they are planned, but return no fabricated results. There is no specification upload, test runner, database, anomaly detection, or live event stream yet. Stage 2 can introduce an OpenAPI import module and persistence layer while retaining the existing app/router and frontend service boundaries.
+Only the health and metadata API routes are implemented. The dashboard's Projects, API Explorer, Test Runs, Contract Changes, Performance, AI Insights, Alerts, and Settings areas communicate the current Stage 1 boundary and return no fabricated results. Metric tiles and the Recharts trend show explicit no-data states. There is no specification upload, test runner, database, anomaly detection, or live event stream yet. Stage 2 can introduce an OpenAPI import module and persistence layer while retaining the existing app/router and frontend service boundaries.

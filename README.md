@@ -7,8 +7,10 @@ ContractIQ is a local-first foundation for an API testing and reliability platfo
 - FastAPI project, health, and versioned status endpoints.
 - Interactive API documentation at `/docs`.
 - Configurable backend CORS and application metadata.
-- Responsive React dashboard with Overview, API Projects, API Testing, Breaking Changes, Performance Monitoring, and Settings navigation.
+- Responsive React dashboard with Overview, Projects, API Explorer, Test Runs, Contract Changes, Performance, AI Insights, Alerts, and Settings navigation.
 - The dashboard calls the backend `/health` endpoint and presents loading, connected, disconnected, and retry states.
+- Searchable command palette (`Ctrl+K` / `Cmd+K`), project selector, notifications menu, profile menu, and mobile navigation drawer.
+- API health metrics, trend chart, recent executions, and change panels show explicit empty states until real product data exists.
 - API import and later-stage views are clearly identified as not yet implemented.
 - Pytest coverage for the endpoints and local frontend CORS policy.
 
@@ -18,6 +20,9 @@ ContractIQ is a local-first foundation for an API testing and reliability platfo
 - **Pytest / HTTPX:** tests API responses and browser-style HTTP requests without needing to start a server.
 - **JavaScript / React:** reusable, interactive dashboard interface.
 - **Vite:** local development server and production bundler for the frontend.
+- **Tailwind CSS:** utility foundation and design tokens, with page-specific visual styling in `src/App.css`.
+- **shadcn-style UI primitives:** local accessible button variants built with class-variance-authority and Tailwind class merging.
+- **Recharts:** responsive chart primitives, currently rendered in a deliberate no-telemetry empty state.
 - **Fetch API:** native browser HTTP client; no additional HTTP library is required.
 - **Lucide React:** open-source interface icons.
 
@@ -39,7 +44,8 @@ ContractIQ/
 │   └── requirements.txt         # Python dependencies
 ├── frontend/
 │   ├── src/
-│   │   ├── components/          # Navigation and backend status components
+│   │   ├── components/          # Navigation, backend status, and shared UI primitives
+│   │   │   └── ui/button.jsx    # Reusable shadcn-style button variants
 │   │   ├── pages/               # Overview and future-stage placeholder views
 │   │   ├── services/api.js      # Shared backend health request
 │   │   ├── App.jsx              # App shell, navigation state, and import notice
@@ -49,6 +55,8 @@ ContractIQ/
 │   ├── .env.example             # Example Vite API URL
 │   ├── index.html               # Vite HTML entry point
 │   ├── package.json             # Scripts and JavaScript dependencies
+│   ├── tailwind.config.js        # Tailwind content paths and theme tokens
+│   ├── postcss.config.js         # Tailwind and Autoprefixer integration
 │   └── vite.config.js           # Vite React plugin configuration
 ├── docs/
 │   └── architecture.md          # Frontend/backend request and configuration flow
