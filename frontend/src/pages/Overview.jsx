@@ -93,7 +93,7 @@ export default function Overview({ connectionState, onImport, onNavigate }) {
           <div className="table-scroll">
             <table className="data-table">
               <thead><tr><th>TEST RUN</th><th>STATUS</th><th>STARTED</th></tr></thead>
-              <tbody><tr><td className="table-empty" colSpan="3"><span className="table-empty-icon"><FlaskConical size={17} /></span><strong>No test runs yet</strong><span>API checks will appear here when testing is available.</span></td></tr></tbody>
+              <tbody><tr><td className="table-empty" colSpan="3"><span className="table-empty-icon"><FlaskConical size={17} /></span><strong>No test runs yet</strong><span>Generate and run API checks from the Test Runs workspace.</span></td></tr></tbody>
             </table>
           </div>
         </section>
