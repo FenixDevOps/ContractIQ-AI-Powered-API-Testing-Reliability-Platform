@@ -33,7 +33,7 @@ const sectionDetails = {
     title: "Test Runs",
     description: "Review execution history and investigate failed checks.",
     message: "No test executions",
-    detail: "ContractIQ does not run API tests in Stage 1. No test run history is being collected.",
+    detail: "Generate cases, configure an approved target, and review real execution history in the Test Runs workspace.",
     icon: FlaskConical,
   },
   changes: {
@@ -54,7 +54,7 @@ const sectionDetails = {
     title: "AI Insights",
     description: "Surface actionable observations from API quality signals.",
     message: "Insights are not active",
-    detail: "This Stage 1 foundation does not analyze API specifications or runtime data.",
+    detail: "This Stage 2 foundation does not analyze API specifications or runtime data with AI.",
     icon: Sparkles,
   },
   alerts: {

@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "./ui/button.jsx";
+import { API_DOCS_URL } from "../services/api.js";
 
 export const navigation = [
   { id: "overview", label: "Overview", icon: LayoutDashboard, group: "workspace" },
@@ -81,10 +82,10 @@ export default function Sidebar({ activeSection, onNavigate, isOpen, onClose, co
             <span><strong>ContractIQ API</strong><small>Local connection</small></span>
             <span className={`connection-note-dot connection-note-${connectionState}`} />
           </div>
-          <a className="help-link" href="http://127.0.0.1:8000/docs" target="_blank" rel="noreferrer">
+          <a className="help-link" href={API_DOCS_URL} target="_blank" rel="noreferrer">
             <CircleHelp size={15} /> API documentation <span>↗</span>
           </a>
-          <div className="sidebar-version"><span>CONTRACTIQ</span><span>STAGE 1</span></div>
+          <div className="sidebar-version"><span>CONTRACTIQ</span><span>STAGE 3</span></div>
         </div>
       </aside>
     </>

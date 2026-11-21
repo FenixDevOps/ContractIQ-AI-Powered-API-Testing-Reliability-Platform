@@ -1,12 +1,13 @@
-# ContractIQ Stage 1 Architecture
+# ContractIQ Architecture
 
 ## Components
 
-- **React + Vite frontend:** `frontend/src/App.jsx` owns page selection, the backend connection state, responsive navigation, and the searchable command palette. `Sidebar.jsx` handles grouped section navigation; `Overview.jsx` and `PlaceholderPage.jsx` render the overview and section-specific empty states.
-- **Design system:** Tailwind provides theme tokens, while local shadcn-style primitives in `components/ui` keep common controls consistent. Lucide supplies icons; Recharts renders the empty performance chart without synthetic points.
-- **API client:** `frontend/src/services/api.js` is the single place where the browser's backend URL and health request are defined.
-- **FastAPI backend:** `backend/app/main.py` creates the application, configures CORS, and registers the system routes. `config.py` reads environment settings. `routes/health.py` owns health and versioned application status.
-- **Tests:** `backend/tests/test_health.py` exercises endpoint contracts and the preflight response for the Vite origin.
+- **React + Vite frontend:** `frontend/src/App.jsx` owns page selection, connection state, responsive navigation, and the command palette. `Stage2Pages.jsx` provides projects/specification exploration; `TestingPage.jsx` handles test generation, execution configuration, results, and history.
+- **Frontend API client:** `frontend/src/services/api.js` centralizes the configured backend URL, health check, projects/specifications, and test-generation/execution requests.
+- **FastAPI backend:** `backend/app/main.py` configures the API and CORS. Separate route modules own health, projects, specifications, endpoints, and automated testing.
+- **Services:** OpenAPI parsing/import, test generation, outbound target validation, HTTPX execution, response validation, and version comparison remain outside route handlers.
+- **Persistence:** SQLAlchemy models use SQLite locally or PostgreSQL through `CONTRACTIQ_DATABASE_URL`. Alembic migrations manage schema changes; application startup does not create production tables.
+- **Tests:** Pytest uses isolated in-memory SQLite databases for route tests. HTTPX execution tests use `MockTransport`, never production APIs.
 
 ## Health Request Flow
 
@@ -20,18 +21,14 @@ sequenceDiagram
     API->>API: CORS validates the configured origin
     API-->>Client: 200 {"status":"healthy"}
     Client-->>Browser: resolved health payload
-    Browser->>Browser: display Connected
-    Note over Client,API: Network, non-2xx, or unexpected status becomes Disconnected
 ```
 
-The frontend does not assume the backend is available: the initial state is `Checking backend`. A successful HTTP response with a `healthy` body changes it to `Backend connected`. Network failures, non-success HTTP status codes, and unexpected health payloads change it to `Backend disconnected`; the retry control performs the same request again.
+## Import and Testing Flow
 
-## Configuration and CORS
+An OpenAPI upload is parsed in memory with safe JSON/YAML parsers, validated against the OpenAPI schema, hashed, and stored as an immutable version with extracted endpoint rows. Test generation creates stable test cases from those persisted endpoints. Before execution, the caller provides a target base URL and execution settings. The backend checks exact host/port allowlists and network addresses, pins the DNS results in the HTTPX transport, then executes requests sequentially without redirects or environment proxy use. Status, media type, and schema validations are persisted with sanitized request/response details.
 
-`frontend/.env` sets `VITE_API_BASE_URL`, which Vite exposes to browser code at build/dev-server startup. It is a public URL, not a secret. The backend reads `CONTRACTIQ_APP_NAME`, `CONTRACTIQ_APP_VERSION`, and the comma-separated `CONTRACTIQ_ALLOWED_ORIGINS` from its process environment. Uvicorn's `--env-file` option loads `backend/.env` for local development.
+## Configuration and Security Boundaries
 
-The default backend origins are `http://localhost:5173` and `http://127.0.0.1:5173`. If Vite uses another port, add that exact origin to `CONTRACTIQ_ALLOWED_ORIGINS` and restart FastAPI. CORS is enforced by the browser; it is not authentication.
+`frontend/.env` sets `VITE_API_BASE_URL`; it is a public URL, not a secret. The backend reads `CONTRACTIQ_*` settings from its environment. Uvicorn's `--env-file` loads `backend/.env`; Alembic loads that same file when applying migrations.
 
-## Stage 1 Boundaries
-
-Only the health and metadata API routes are implemented. The dashboard's Projects, API Explorer, Test Runs, Contract Changes, Performance, AI Insights, Alerts, and Settings areas communicate the current Stage 1 boundary and return no fabricated results. Metric tiles and the Recharts trend show explicit no-data states. There is no specification upload, test runner, database, anomaly detection, or live event stream yet. Stage 2 can introduce an OpenAPI import module and persistence layer while retaining the existing app/router and frontend service boundaries.
+CORS is enforced by browsers and is not authentication. Test execution is separately restricted by `CONTRACTIQ_TEST_ALLOWED_TARGET_HOSTS` and `CONTRACTIQ_TEST_ALLOWED_TARGET_PORTS`. Private targets are disabled by default; local-development access requires an explicit host/port allowlist and `CONTRACTIQ_TEST_ALLOW_PRIVATE_TARGETS=true`. Production environment runs cannot execute write methods. See [automated-testing-engine.md](automated-testing-engine.md) for all execution safeguards.
