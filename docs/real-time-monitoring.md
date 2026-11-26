@@ -13,20 +13,10 @@ python -m alembic upgrade head
 Set these backend environment variables and restart the API:
 
 ```text
-CONTRACTIQ_MONITORING_AUTH_TOKEN=<random token with at least 32 characters>
-CONTRACTIQ_MONITORING_ALLOWED_PROJECT_IDS=<project UUIDs separated by commas>
 CONTRACTIQ_MONITORING_SCHEDULER_ENABLED=true
 ```
 
-Generate a token with Python:
-
-```powershell
-python -c "import secrets; print(secrets.token_urlsafe(32))"
-```
-
-An empty project allowlist denies all project access. Setting the list to `*` explicitly allows the token to access every project. The frontend asks for the token on the monitoring pages and keeps it in browser `sessionStorage` for the current browser session. REST requests use a bearer header; browser WebSockets use the `contractiq.monitoring.v1` and `bearer.<token>` subprotocols, never a URL query parameter. Do not place the token in source control or a `VITE_*` setting.
-
-This repository has no user identity provider or login/session service. The monitoring token is therefore shared workspace access, not per-user authentication. Project authorization is an environment-configured allowlist, not a user-to-project permission database. For multi-user production deployments, replace this mechanism with an identity provider or an authenticated backend-for-frontend that issues short-lived user sessions; do not ship a shared token in a public static frontend.
+Sign in with a ContractIQ account. Monitoring REST and WebSocket requests use the account's short-lived access token and require membership in the selected project. Project roles are enforced by the backend; see [project-access-and-authentication.md](project-access-and-authentication.md). Email invitations require the SMTP configuration described there.
 
 ## Target safety and scheduled checks
 

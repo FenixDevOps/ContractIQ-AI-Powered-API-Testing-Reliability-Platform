@@ -27,9 +27,7 @@ import {
   acknowledgeAnomaly,
   createMonitoringConfiguration,
   createMonitoringSocket,
-  clearMonitoringAuthToken,
   deleteMonitoringConfiguration,
-  getMonitoringAuthToken,
   getAnomalyModelStatus,
   getMonitoringAlerts,
   getMonitoringAnomalies,
@@ -40,10 +38,10 @@ import {
   getProjectSpecifications,
   getSpecificationEndpoints,
   pauseMonitoringConfiguration,
+  refreshAuthSession,
   startMonitoringConfiguration,
   trainAnomalyModel,
   updateMonitoringAlert,
-  setMonitoringAuthToken,
 } from "../services/api.js";
 
 const SECTION_INFO = {
@@ -130,9 +128,6 @@ export default function MonitoringPage({ section, projectId }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [authTokenInput, setAuthTokenInput] = useState("");
-  const [hasAuthToken, setHasAuthToken] = useState(false);
-  const [authVersion, setAuthVersion] = useState(0);
 
   const pageInfo = SECTION_INFO[section] || SECTION_INFO.monitoring;
   const environments = useMemo(
@@ -146,10 +141,6 @@ export default function MonitoringPage({ section, projectId }) {
     ),
     [endpoints],
   );
-
-  useEffect(() => {
-    setHasAuthToken(Boolean(getMonitoringAuthToken()));
-  }, []);
 
   useEffect(() => {
     setOverview(null);
@@ -223,7 +214,7 @@ export default function MonitoringPage({ section, projectId }) {
       active = false;
       window.clearInterval(timer);
     };
-  }, [projectId, section, windowSize, environmentName, authVersion]);
+  }, [projectId, section, windowSize, environmentName]);
 
   useEffect(() => {
     if (!projectId || section !== "monitoring") {
@@ -299,10 +290,29 @@ export default function MonitoringPage({ section, projectId }) {
       };
       socket.onerror = () => {
         if (active) setLiveStatus("disconnected");
-        socket.close();
       };
-      socket.onclose = () => {
+      socket.onclose = (event) => {
         if (!active) return;
+        if (event.code === 4401) {
+          setLiveStatus("reconnecting");
+          refreshAuthSession()
+            .then((session) => {
+              if (!active) return;
+              if (session) connect();
+              else window.dispatchEvent(new Event("contractiq:auth-expired"));
+            })
+            .catch((caught) => {
+              if (!active) return;
+              setError(caught.message);
+              reconnectTimer = window.setTimeout(connect, 5000);
+            });
+          return;
+        }
+        if (event.code === 4403 || event.code === 4404) {
+          setLiveStatus("disconnected");
+          setError("Access to this live project stream was denied.");
+          return;
+        }
         setLiveStatus("reconnecting");
         reconnectTimer = window.setTimeout(connect, 2000);
       };
@@ -313,7 +323,7 @@ export default function MonitoringPage({ section, projectId }) {
       window.clearTimeout(reconnectTimer);
       socket?.close();
     };
-  }, [projectId, section, authVersion]);
+  }, [projectId, section]);
 
   const refreshMonitoring = useCallback(async () => {
     if (!projectId) return;
@@ -438,26 +448,6 @@ export default function MonitoringPage({ section, projectId }) {
     }
   }
 
-  function connectMonitoringAccess(event) {
-    event.preventDefault();
-    if (authTokenInput.trim().length < 32) {
-      setError("Monitoring access tokens must contain at least 32 characters.");
-      return;
-    }
-    setMonitoringAuthToken(authTokenInput);
-    setAuthTokenInput("");
-    setHasAuthToken(true);
-    setError("");
-    setAuthVersion((version) => version + 1);
-  }
-
-  function replaceMonitoringAccess() {
-    clearMonitoringAuthToken();
-    setHasAuthToken(false);
-    setError("");
-    setAuthVersion((version) => version + 1);
-  }
-
   const metricSummary = metrics.summary || {};
   const latestCheck = overview?.latest_check;
 
@@ -489,19 +479,6 @@ export default function MonitoringPage({ section, projectId }) {
           </div>
         )}
       </div>
-      <section className="monitor-access-panel">
-        <div><strong>Monitoring access</strong><span>Project access is controlled by the backend token and project allowlist.</span></div>
-        {hasAuthToken ? (
-          <div className="monitor-access-connected"><span>Token stored for this browser session only.</span><Button variant="ghost" size="sm" onClick={replaceMonitoringAccess}>Change token</Button></div>
-        ) : (
-          <form onSubmit={connectMonitoringAccess}>
-            <label htmlFor="monitoring-access-token">Backend bearer token</label>
-            <input id="monitoring-access-token" type="password" autoComplete="current-password" minLength="32" maxLength="512" value={authTokenInput} onChange={(event) => setAuthTokenInput(event.target.value)} placeholder="Paste the configured monitoring token" />
-            <Button type="submit" disabled={authTokenInput.trim().length < 32}>Connect</Button>
-          </form>
-        )}
-        {!hasAuthToken && <small>The token stays in session storage; it is not embedded in the frontend build. It is shared access, not per-user login.</small>}
-      </section>
       {!projectId && <div className="stage-empty"><Activity size={22} /><strong>Select a project</strong><span>Choose an API project from the workspace selector to view monitoring data.</span></div>}
       {error && <div className="stage-error" role="alert">{error}</div>}
       {notice && <div className="monitor-notice" role="status">{notice}</div>}

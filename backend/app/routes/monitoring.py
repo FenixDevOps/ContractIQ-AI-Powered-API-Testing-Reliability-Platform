@@ -9,6 +9,7 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.config import ALLOWED_ORIGINS
 from app.database.connection import get_db
 from app.database.models import (
     AnomalyDetection,
@@ -18,6 +19,7 @@ from app.database.models import (
     MonitoringCheck,
     MonitoringConfiguration,
     Project,
+    User,
 )
 from app.schemas.monitoring import (
     AlertOut,
@@ -29,12 +31,8 @@ from app.schemas.monitoring import (
     MonitoringConfigurationUpdate,
 )
 from app.services.anomaly_detection import get_model_status, train_project_model
-from app.services.monitoring_access import (
-    WEBSOCKET_SUBPROTOCOL,
-    authorize_monitoring_project,
-    require_monitoring_token,
-    token_matches,
-)
+from app.services.authentication import AuthenticationError, authenticate_access_token, get_current_user
+from app.services.authorization import READ_ROLES, WRITE_ROLES, project_membership
 from app.services.monitoring_events import event_hub
 from app.services.monitoring_metrics import aggregate_metrics
 from app.services.monitoring_runner import validate_monitorable_endpoints
@@ -43,14 +41,27 @@ from app.services.monitoring_time import utc_now
 
 router = APIRouter(tags=["monitoring"])
 logger = logging.getLogger(__name__)
+WEBSOCKET_SUBPROTOCOL = "contractiq.monitoring.v1"
 
 
 def _authorized_project(
     project_id: UUID,
     db: Session = Depends(get_db),
-    _token: None = Depends(require_monitoring_token),
+    user: User = Depends(get_current_user),
 ) -> Project:
-    return authorize_monitoring_project(db, project_id)
+    project, _ = project_membership(db, user, project_id, READ_ROLES)
+    return project
+
+
+def _editable_project(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Project:
+    project, _ = project_membership(db, user, project_id, WRITE_ROLES)
+    if project.is_archived:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Restore this project before changing monitoring settings.")
+    return project
 
 
 def _configuration(db: Session, project_id: UUID, configuration_id: UUID) -> MonitoringConfiguration:
@@ -105,7 +116,7 @@ def _commit_or_raise(db: Session, message: str, context: str) -> None:
 )
 def create_configuration(
     payload: MonitoringConfigurationCreate,
-    project: Project = Depends(_authorized_project),
+    project: Project = Depends(_editable_project),
     db: Session = Depends(get_db),
 ) -> dict:
     specification = db.get(ApiSpecification, payload.specification_id)
@@ -181,7 +192,7 @@ def list_configurations(
 def update_configuration(
     payload: MonitoringConfigurationUpdate,
     configuration_id: UUID,
-    project: Project = Depends(_authorized_project),
+    project: Project = Depends(_editable_project),
     db: Session = Depends(get_db),
 ) -> dict:
     configuration = _configuration(db, project.id, configuration_id)
@@ -207,7 +218,7 @@ def update_configuration(
 )
 def start_configuration(
     configuration_id: UUID,
-    project: Project = Depends(_authorized_project),
+    project: Project = Depends(_editable_project),
     db: Session = Depends(get_db),
 ) -> dict:
     configuration = _configuration(db, project.id, configuration_id)
@@ -228,7 +239,7 @@ def start_configuration(
 )
 def pause_configuration(
     configuration_id: UUID,
-    project: Project = Depends(_authorized_project),
+    project: Project = Depends(_editable_project),
     db: Session = Depends(get_db),
 ) -> dict:
     configuration = _configuration(db, project.id, configuration_id)
@@ -249,7 +260,7 @@ def pause_configuration(
 )
 def delete_configuration(
     configuration_id: UUID,
-    project: Project = Depends(_authorized_project),
+    project: Project = Depends(_editable_project),
     db: Session = Depends(get_db),
 ):
     configuration = _configuration(db, project.id, configuration_id)
@@ -429,7 +440,7 @@ def list_anomalies(
 
 @router.post("/api/v1/projects/{project_id}/monitoring/anomalies/train")
 def train_anomaly_model(
-    project: Project = Depends(_authorized_project),
+    project: Project = Depends(_editable_project),
     db: Session = Depends(get_db),
 ) -> dict:
     try:
@@ -455,7 +466,7 @@ def anomaly_model_status(
 @router.patch("/api/v1/projects/{project_id}/monitoring/anomalies/{anomaly_id}/acknowledge")
 def acknowledge_anomaly(
     anomaly_id: UUID,
-    project: Project = Depends(_authorized_project),
+    project: Project = Depends(_editable_project),
     db: Session = Depends(get_db),
 ) -> dict:
     anomaly = db.get(AnomalyDetection, anomaly_id)
@@ -511,7 +522,7 @@ def list_alerts(
 def update_alert(
     payload: AlertUpdate,
     alert_id: UUID,
-    project: Project = Depends(_authorized_project),
+    project: Project = Depends(_editable_project),
     db: Session = Depends(get_db),
 ) -> dict:
     alert = db.get(MonitoringAlert, alert_id)
@@ -545,13 +556,23 @@ async def monitoring_live(
         if item.strip()
     ]
     token_protocol = next((item for item in offered if item.startswith("bearer.")), None)
-    if WEBSOCKET_SUBPROTOCOL not in offered or not token_matches(
-        token_protocol[len("bearer."):] if token_protocol else None
-    ):
+    origin = websocket.headers.get("origin")
+    if origin and origin not in ALLOWED_ORIGINS:
+        subprotocol = WEBSOCKET_SUBPROTOCOL if WEBSOCKET_SUBPROTOCOL in offered else None
+        await websocket.accept(subprotocol=subprotocol)
+        await websocket.close(code=4403, reason="WebSocket origin is not allowed.")
+        return
+    if WEBSOCKET_SUBPROTOCOL not in offered or not token_protocol:
+        await websocket.accept()
         await websocket.close(code=4401, reason="Monitoring authentication failed.")
         return
+    await websocket.accept(subprotocol=WEBSOCKET_SUBPROTOCOL)
     try:
-        authorize_monitoring_project(db, project_id)
+        user = authenticate_access_token(token_protocol[len("bearer."):], db)
+        project_membership(db, user, project_id, READ_ROLES)
+    except AuthenticationError:
+        await websocket.close(code=4401, reason="Monitoring authentication failed.")
+        return
     except HTTPException as exc:
         await websocket.close(
             code=4404 if exc.status_code == status.HTTP_404_NOT_FOUND else 4403,

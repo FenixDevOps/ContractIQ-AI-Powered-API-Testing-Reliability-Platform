@@ -18,12 +18,36 @@ def uuid_type():
     return Uuid(as_uuid=True)
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(uuid_type(), primary_key=True, default=uuid.uuid4)
+    full_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True, index=True)
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=text("true"))
+    is_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
+    created_at: Mapped[datetime] = mapped_column(server_default=text("CURRENT_TIMESTAMP"))
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=text("CURRENT_TIMESTAMP"), onupdate=text("CURRENT_TIMESTAMP")
+    )
+
+    memberships: Mapped[list["ProjectMembership"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    auth_sessions: Mapped[list["AuthSession"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
+
 class Project(Base):
     __tablename__ = "projects"
 
     id: Mapped[uuid.UUID] = mapped_column(uuid_type(), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text())
+    is_archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime())
     created_at: Mapped[datetime] = mapped_column(server_default=text("CURRENT_TIMESTAMP"))
     updated_at: Mapped[datetime] = mapped_column(server_default=text("CURRENT_TIMESTAMP"), onupdate=text("CURRENT_TIMESTAMP"))
 
@@ -33,6 +57,131 @@ class Project(Base):
     monitoring_configurations: Mapped[list["MonitoringConfiguration"]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
+    memberships: Mapped[list["ProjectMembership"]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    activities: Mapped[list["ProjectActivity"]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    invitations: Mapped[list["ProjectInvite"]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+
+
+class ProjectMembership(Base):
+    __tablename__ = "project_memberships"
+    __table_args__ = (
+        UniqueConstraint("project_id", "user_id", name="uq_project_membership_project_user"),
+        Index("ix_project_memberships_user_role", "user_id", "role"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(uuid_type(), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        uuid_type(), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        uuid_type(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(server_default=text("CURRENT_TIMESTAMP"))
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=text("CURRENT_TIMESTAMP"), onupdate=text("CURRENT_TIMESTAMP")
+    )
+
+    project: Mapped["Project"] = relationship(back_populates="memberships")
+    user: Mapped["User"] = relationship(back_populates="memberships")
+
+
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(uuid_type(), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        uuid_type(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    refresh_token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    csrf_token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=text("CURRENT_TIMESTAMP"))
+    last_used_at: Mapped[datetime] = mapped_column(server_default=text("CURRENT_TIMESTAMP"))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime())
+
+    user: Mapped["User"] = relationship(back_populates="auth_sessions")
+
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[uuid.UUID] = mapped_column(uuid_type(), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        uuid_type(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False, index=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime())
+    created_at: Mapped[datetime] = mapped_column(server_default=text("CURRENT_TIMESTAMP"))
+
+
+class EmailVerificationToken(Base):
+    __tablename__ = "email_verification_tokens"
+
+    id: Mapped[uuid.UUID] = mapped_column(uuid_type(), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        uuid_type(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False, index=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime())
+    created_at: Mapped[datetime] = mapped_column(server_default=text("CURRENT_TIMESTAMP"))
+
+
+class AuthRateLimitBucket(Base):
+    __tablename__ = "auth_rate_limit_buckets"
+
+    key_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    window_started_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class ProjectInvite(Base):
+    __tablename__ = "project_invites"
+
+    id: Mapped[uuid.UUID] = mapped_column(uuid_type(), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        uuid_type(), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    invited_by_user_id: Mapped[uuid.UUID] = mapped_column(
+        uuid_type(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(), nullable=False, index=True)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime())
+    created_at: Mapped[datetime] = mapped_column(server_default=text("CURRENT_TIMESTAMP"))
+
+    project: Mapped["Project"] = relationship(back_populates="invitations")
+
+
+class ProjectActivity(Base):
+    __tablename__ = "project_activities"
+    __table_args__ = (Index("ix_project_activities_project_created", "project_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(uuid_type(), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        uuid_type(), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        uuid_type(), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    action: Mapped[str] = mapped_column(String(80), nullable=False)
+    resource_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    resource_id: Mapped[str | None] = mapped_column(String(80))
+    details: Mapped[dict] = mapped_column(JSON_DOCUMENT, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(server_default=text("CURRENT_TIMESTAMP"))
+
+    project: Mapped["Project"] = relationship(back_populates="activities")
+    actor: Mapped["User | None"] = relationship()
 
 
 class ApiSpecification(Base):

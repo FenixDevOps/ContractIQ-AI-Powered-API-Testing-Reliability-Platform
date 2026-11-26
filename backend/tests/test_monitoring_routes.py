@@ -1,21 +1,9 @@
 import json
 
+import pytest
+from starlette.websockets import WebSocketDisconnect
+
 from app.services.target_security import ValidatedTarget
-
-
-TOKEN = "test-monitoring-token"
-
-
-def _authorize(monkeypatch, project_id, *, allow=True):
-    import app.services.monitoring_access as access
-
-    monkeypatch.setattr(access, "MONITORING_AUTH_TOKEN", TOKEN)
-    monkeypatch.setattr(
-        access,
-        "MONITORING_ALLOWED_PROJECT_IDS",
-        {str(project_id)} if allow else set(),
-    )
-    return {"Authorization": f"Bearer {TOKEN}"}
 
 
 def _import_spec(client, project_id, paths, security=None):
@@ -34,28 +22,38 @@ def _import_spec(client, project_id, paths, security=None):
     return response.json()
 
 
-def test_monitoring_routes_require_bearer_and_project_allowlist(isolated_client, monkeypatch):
-    project = isolated_client.post("/api/v1/projects", json={"name": "Monitored"}).json()
+def test_monitoring_routes_require_authenticated_project_membership(auth_client):
+    login = auth_client.post(
+        "/api/v1/auth/login",
+        json={"email": "owner@example.com", "password": "test-owner-password-123"},
+    )
+    assert login.status_code == 200
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    project = auth_client.post(
+        "/api/v1/projects",
+        headers=headers,
+        json={"name": "Monitored"},
+    ).json()
     url = f"/api/v1/projects/{project['id']}/monitoring/configurations"
-    import app.services.monitoring_access as access
-
-    monkeypatch.setattr(access, "MONITORING_AUTH_TOKEN", TOKEN)
-    monkeypatch.setattr(access, "MONITORING_ALLOWED_PROJECT_IDS", {project["id"]})
-    assert isolated_client.get(url).status_code == 401
-    headers = {"Authorization": f"Bearer {TOKEN}"}
-    monkeypatch.setattr(access, "MONITORING_ALLOWED_PROJECT_IDS", set())
-    assert isolated_client.get(url, headers=headers).status_code == 403
-    monkeypatch.setattr(access, "MONITORING_ALLOWED_PROJECT_IDS", {project["id"]})
-    response = isolated_client.get(url, headers=headers)
+    assert auth_client.get(url).status_code == 401
+    response = auth_client.get(url, headers=headers)
     assert response.status_code == 200
     assert response.json() == []
+
+    outsider = auth_client.post(
+        "/api/v1/auth/register",
+        json={"full_name": "Outsider", "email": "outsider@example.com", "password": "outsider-password-123"},
+    )
+    assert outsider.status_code == 201
+    outsider_headers = {"Authorization": f"Bearer {outsider.json()['access_token']}"}
+    assert auth_client.get(url, headers=outsider_headers).status_code == 404
 
 
 def test_configuration_accepts_only_safe_public_endpoints_and_can_start_pause(
     isolated_client, monkeypatch
 ):
     project = isolated_client.post("/api/v1/projects", json={"name": "Monitored"}).json()
-    headers = _authorize(monkeypatch, project["id"])
+    headers = {}
     specification = _import_spec(isolated_client, project["id"], {
         "/health": {"get": {"responses": {"200": {"description": "OK"}}}},
         "/change": {"post": {"responses": {"200": {"description": "OK"}}}},
@@ -127,7 +125,7 @@ def test_configuration_accepts_only_safe_public_endpoints_and_can_start_pause(
 
 def test_monitoring_configuration_rejects_global_authentication(isolated_client, monkeypatch):
     project = isolated_client.post("/api/v1/projects", json={"name": "Private"}).json()
-    headers = _authorize(monkeypatch, project["id"])
+    headers = {}
     specification = _import_spec(
         isolated_client,
         project["id"],
@@ -164,14 +162,42 @@ def test_monitoring_configuration_rejects_global_authentication(isolated_client,
     assert "global authentication" in response.json()["detail"]
 
 
-def test_live_websocket_requires_token_and_authorized_project(isolated_client, monkeypatch):
-    project = isolated_client.post("/api/v1/projects", json={"name": "Live"}).json()
-    _authorize(monkeypatch, project["id"])
+def test_live_websocket_requires_access_token_and_project_membership(auth_client):
+    login = auth_client.post(
+        "/api/v1/auth/login",
+        json={"email": "owner@example.com", "password": "test-owner-password-123"},
+    )
+    token = login.json()["access_token"]
+    project = auth_client.post(
+        "/api/v1/projects",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"name": "Live"},
+    ).json()
     url = f"/ws/v1/projects/{project['id']}/monitoring/live"
-    with isolated_client.websocket_connect(
+    with auth_client.websocket_connect(
         url,
-        subprotocols=["contractiq.monitoring.v1", f"bearer.{TOKEN}"],
+        subprotocols=["contractiq.monitoring.v1", f"bearer.{token}"],
     ) as websocket:
         assert websocket.accepted_subprotocol == "contractiq.monitoring.v1"
         websocket.send_text("PING")
         assert websocket.receive_json()["event"] == "PONG"
+
+
+def test_live_websocket_reports_expired_access_token(auth_client):
+    login = auth_client.post(
+        "/api/v1/auth/login",
+        json={"email": "owner@example.com", "password": "test-owner-password-123"},
+    )
+    token = login.json()["access_token"]
+    project = auth_client.post(
+        "/api/v1/projects",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"name": "Expired live session"},
+    ).json()
+    with auth_client.websocket_connect(
+        f"/ws/v1/projects/{project['id']}/monitoring/live",
+        subprotocols=["contractiq.monitoring.v1", "bearer.invalid-token"],
+    ) as websocket:
+        with pytest.raises(WebSocketDisconnect) as disconnected:
+            websocket.receive_text()
+        assert disconnected.value.code == 4401

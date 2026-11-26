@@ -69,6 +69,9 @@ ContractIQ/
 │   ├── openapi-import-engine.md
 │   ├── automated-testing-engine.md
 │   ├── breaking-change-detection.md
+│   ├── deployment-options.md
+│   ├── project-access-and-authentication.md
+│   ├── project-showcase.md
 │   ├── real-time-monitoring.md
 │   └── development_log.md
 ├── .gitignore                   # Excludes generated and local-only files
@@ -273,10 +276,9 @@ Stage 5 adds scheduled, read-only probes for public `GET`, `HEAD`, and `OPTIONS`
 ### Enable Stage 5
 
 1. Apply `python -m alembic upgrade head` from `backend`.
-2. Set `CONTRACTIQ_MONITORING_AUTH_TOKEN` to a random value of at least 32 characters and set `CONTRACTIQ_MONITORING_ALLOWED_PROJECT_IDS` to the UUIDs permitted to use monitoring. An explicit `*` grants the token access to every project; the default empty allowlist denies all project access.
-3. Add each approved target's exact hostname and port to `CONTRACTIQ_TEST_ALLOWED_TARGET_HOSTS` and `CONTRACTIQ_TEST_ALLOWED_TARGET_PORTS`. Private targets remain disabled unless explicitly enabled for development.
-4. Restart the backend, open a Stage 5 page, and enter the token in the access panel. It is held in browser session storage, not embedded in the frontend bundle.
-5. Create a configuration and start it. The scheduler supports intervals from 30 to 3600 seconds, up to 20 endpoints per configuration, and timeouts up to 30 seconds.
+2. Add each approved target's exact hostname and port to `CONTRACTIQ_TEST_ALLOWED_TARGET_HOSTS` and `CONTRACTIQ_TEST_ALLOWED_TARGET_PORTS`. Private targets remain disabled unless explicitly enabled for development.
+3. Sign in with an account that belongs to the project. Monitoring REST and WebSocket requests use the account session and enforce project membership.
+4. Create a configuration and start it. The scheduler supports intervals from 30 to 3600 seconds, up to 20 endpoints per configuration, and timeouts up to 30 seconds.
 
 ### Stage 5 API routes
 
@@ -293,4 +295,10 @@ Stage 5 adds scheduled, read-only probes for public `GET`, `HEAD`, and `OPTIONS`
 - `GET /api/v1/projects/{project_id}/monitoring/alerts`; `PATCH .../alerts/{alert_id}`
 - `WS /ws/v1/projects/{project_id}/monitoring/live`
 
-The shared token/project allowlist is workspace-level access, not per-user identity. Live WebSocket events are delivered only within the current backend process; run a single worker when using the live page. Synthetic probe counts are not actual client-traffic measurements. See [docs/real-time-monitoring.md](docs/real-time-monitoring.md) for security boundaries, model warm-up, data limits, environment filters, and these limitations.
+Live WebSocket events are delivered only within the current backend process; run a single worker when using the live page. Synthetic probe counts are not actual client-traffic measurements. See [docs/real-time-monitoring.md](docs/real-time-monitoring.md) for security boundaries, model warm-up, data limits, environment filters, and these limitations.
+
+## Stage 6: Accounts, Project Access, and Production Readiness
+
+Stage 6 adds account registration and sign-in, email verification, rotating refresh sessions, password reset and change flows, project membership roles, project lifecycle actions, invitation management, and project activity/dashboard data. Existing testing, compatibility, and monitoring APIs are now scoped to project membership. Legacy projects remain unclaimed until an operator explicitly assigns ownership. Dockerfiles and a PostgreSQL Compose deployment are included; no live deployment is claimed. See [docs/project-access-and-authentication.md](docs/project-access-and-authentication.md) for role boundaries and deployment guidance, [docs/deployment-options.md](docs/deployment-options.md) for a sourced hosting/free-tier comparison, and [docs/project-showcase.md](docs/project-showcase.md) for a portfolio summary with verified scope and limitations.
+
+Apply all schema changes with `python -m alembic upgrade head` from `backend`. Production deployments must configure `CONTRACTIQ_SECRET_KEY`, secure cookies, exact allowed origins, and SMTP credentials before enabling account workflows. Registration defaults to disabled and email verification defaults to required in production. Multi-worker WebSocket broadcasting is not implemented. Do not claim a live deployment without validating it in the target environment.

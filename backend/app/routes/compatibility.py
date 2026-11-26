@@ -16,20 +16,30 @@ from app.database.models import (
     CompatibilityChange,
     CompatibilityComparison,
     Project,
+    User,
 )
 from app.schemas.compatibility import ComparisonCreate
+from app.services.authentication import get_current_user
+from app.services.authorization import READ_ROLES, WRITE_ROLES, project_membership
 from app.services.compatibility_engine import CompatibilityEngine
 
 router = APIRouter(tags=["compatibility"])
 logger = logging.getLogger(__name__)
 
 
-def _comparison(db: Session, comparison_id: UUID) -> CompatibilityComparison:
+def _comparison(
+    db: Session,
+    comparison_id: UUID,
+    user: User,
+    *,
+    write: bool = False,
+) -> CompatibilityComparison:
     item = db.query(CompatibilityComparison).options(
         selectinload(CompatibilityComparison.changes)
     ).filter(CompatibilityComparison.id == comparison_id).first()
     if not item:
         raise HTTPException(404, "Compatibility comparison not found.")
+    project_membership(db, user, item.project_id, WRITE_ROLES if write else READ_ROLES)
     return item
 
 
@@ -69,7 +79,11 @@ def _serialize_comparison(item: CompatibilityComparison) -> dict:
 
 
 @router.post("/api/v1/compatibility/compare", status_code=status.HTTP_201_CREATED)
-def create_comparison(payload: ComparisonCreate, db: Session = Depends(get_db)) -> dict:
+def create_comparison(
+    payload: ComparisonCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
     old_spec = db.get(ApiSpecification, payload.old_specification_id)
     new_spec = db.get(ApiSpecification, payload.new_specification_id)
     if not old_spec or not new_spec:
@@ -81,6 +95,9 @@ def create_comparison(payload: ComparisonCreate, db: Session = Depends(get_db)) 
     project = db.get(Project, old_spec.project_id)
     if not project:
         raise HTTPException(404, "Project not found.")
+    project_membership(db, user, project.id, WRITE_ROLES)
+    if project.is_archived:
+        raise HTTPException(409, "Restore this project before comparing specifications.")
 
     result = CompatibilityEngine().compare(old_spec.raw_specification, new_spec.raw_specification)
     counts = result["counts"]
@@ -137,9 +154,9 @@ def get_history(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> dict:
-    if not db.get(Project, project_id):
-        raise HTTPException(404, "Project not found.")
+    project_membership(db, user, project_id, READ_ROLES)
     query = db.query(CompatibilityComparison).filter(
         CompatibilityComparison.project_id == project_id
     )
@@ -169,8 +186,12 @@ def get_history(
 
 
 @router.get("/api/v1/compatibility/{comparison_id}")
-def get_comparison(comparison_id: UUID, db: Session = Depends(get_db)) -> dict:
-    item = _comparison(db, comparison_id)
+def get_comparison(
+    comparison_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    item = _comparison(db, comparison_id, user)
     return {
         **_serialize_comparison(item),
         "changes": [_serialize_change(change) for change in item.changes],
@@ -196,9 +217,12 @@ def get_changes(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> dict:
-    if not db.get(CompatibilityComparison, comparison_id):
+    item = db.get(CompatibilityComparison, comparison_id)
+    if not item:
         raise HTTPException(404, "Compatibility comparison not found.")
+    project_membership(db, user, item.project_id, READ_ROLES)
     query = db.query(CompatibilityChange).filter(
         CompatibilityChange.comparison_id == comparison_id
     )
@@ -226,8 +250,12 @@ def get_changes(
 
 
 @router.get("/api/v1/compatibility/{comparison_id}/summary")
-def get_summary(comparison_id: UUID, db: Session = Depends(get_db)) -> dict:
-    item = _comparison(db, comparison_id)
+def get_summary(
+    comparison_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    item = _comparison(db, comparison_id, user)
     return {
         **_serialize_comparison(item),
         "endpoint_summary": item.comparison_metadata.get("endpoint_summary", {}),
@@ -237,8 +265,12 @@ def get_summary(comparison_id: UUID, db: Session = Depends(get_db)) -> dict:
 
 
 @router.get("/api/v1/compatibility/{comparison_id}/report/json")
-def download_json_report(comparison_id: UUID, db: Session = Depends(get_db)) -> Response:
-    item = _comparison(db, comparison_id)
+def download_json_report(
+    comparison_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Response:
+    item = _comparison(db, comparison_id, user)
     old_spec = db.get(ApiSpecification, item.old_specification_id)
     new_spec = db.get(ApiSpecification, item.new_specification_id)
     project = db.get(Project, item.project_id)
@@ -265,10 +297,12 @@ def download_json_report(comparison_id: UUID, db: Session = Depends(get_db)) -> 
 
 
 @router.delete("/api/v1/compatibility/{comparison_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_comparison(comparison_id: UUID, db: Session = Depends(get_db)) -> Response:
-    item = db.get(CompatibilityComparison, comparison_id)
-    if not item:
-        raise HTTPException(404, "Compatibility comparison not found.")
+def delete_comparison(
+    comparison_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Response:
+    item = _comparison(db, comparison_id, user, write=True)
     db.delete(item)
     try:
         db.commit()

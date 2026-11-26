@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.config import TEST_MAX_CASES_PER_RUN
 from app.database.connection import get_db
-from app.database.models import ApiSpecification, TestCase, TestResult, TestRun
+from app.database.models import ApiSpecification, Project, TestCase, TestResult, TestRun, User
 from app.schemas.testing import (
     SelectedTestRunRequest,
     TestCaseOut,
@@ -19,12 +19,63 @@ from app.schemas.testing import (
 )
 from app.services.test_executor import TestExecutionConfigurationError, execute_test_run
 from app.services.test_generator import generate_test_cases
+from app.services.authentication import get_current_user
+from app.services.authorization import READ_ROLES, WRITE_ROLES, project_membership
 
 router = APIRouter(tags=["automated testing"])
 
 
 def _case(case: TestCase) -> TestCaseOut:
     return TestCaseOut.model_validate(case)
+
+
+def _authorized_specification(
+    db: Session,
+    user: User,
+    specification_id: UUID,
+    *,
+    write: bool = False,
+) -> ApiSpecification:
+    specification = db.get(ApiSpecification, specification_id)
+    if not specification:
+        raise HTTPException(404, "Specification not found.")
+    project, _ = project_membership(
+        db,
+        user,
+        specification.project_id,
+        WRITE_ROLES if write else READ_ROLES,
+    )
+    if write and project.is_archived:
+        raise HTTPException(409, "Restore this project before changing its tests.")
+    return specification
+
+
+def _authorized_case(
+    db: Session,
+    user: User,
+    test_case_id: UUID,
+    *,
+    write: bool = False,
+) -> TestCase:
+    case = db.get(TestCase, test_case_id)
+    if not case:
+        raise HTTPException(404, "Test case not found.")
+    _authorized_specification(db, user, case.specification_id, write=write)
+    return case
+
+
+def _authorized_run(
+    db: Session,
+    user: User,
+    test_run_id: UUID,
+    *,
+    write: bool = False,
+) -> TestRun:
+    run = db.get(TestRun, test_run_id)
+    if not run:
+        raise HTTPException(404, "Test run not found.")
+    _authorized_specification(db, user, run.specification_id, write=write)
+    return run
 
 
 def _execute(db: Session, specification: ApiSpecification, cases: list[TestCase], payload: TestRunRequest) -> TestRun:
@@ -49,10 +100,12 @@ def _execute(db: Session, specification: ApiSpecification, cases: list[TestCase]
 
 
 @router.post("/api/v1/specifications/{specification_id}/test-cases/generate")
-def generate_cases(specification_id: UUID, db: Session = Depends(get_db)) -> dict:
-    specification = db.get(ApiSpecification, specification_id)
-    if not specification:
-        raise HTTPException(404, "Specification not found.")
+def generate_cases(
+    specification_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    specification = _authorized_specification(db, user, specification_id, write=True)
     try:
         generated = generate_test_cases(db, specification_id)
         db.commit()
@@ -68,9 +121,9 @@ def list_test_cases(
     specification_id: UUID,
     include_disabled: bool = False,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> list[TestCaseOut]:
-    if not db.get(ApiSpecification, specification_id):
-        raise HTTPException(404, "Specification not found.")
+    _authorized_specification(db, user, specification_id)
     query = db.query(TestCase).filter(TestCase.specification_id == specification_id)
     if not include_disabled:
         query = query.filter(TestCase.is_enabled.is_(True))
@@ -78,18 +131,23 @@ def list_test_cases(
 
 
 @router.get("/api/v1/test-cases/{test_case_id}", response_model=TestCaseOut)
-def get_test_case(test_case_id: UUID, db: Session = Depends(get_db)) -> TestCaseOut:
-    case = db.get(TestCase, test_case_id)
-    if not case:
-        raise HTTPException(404, "Test case not found.")
+def get_test_case(
+    test_case_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> TestCaseOut:
+    case = _authorized_case(db, user, test_case_id)
     return _case(case)
 
 
 @router.patch("/api/v1/test-cases/{test_case_id}", response_model=TestCaseOut)
-def update_test_case(test_case_id: UUID, payload: TestCasePatch, db: Session = Depends(get_db)) -> TestCaseOut:
-    case = db.get(TestCase, test_case_id)
-    if not case:
-        raise HTTPException(404, "Test case not found.")
+def update_test_case(
+    test_case_id: UUID,
+    payload: TestCasePatch,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> TestCaseOut:
+    case = _authorized_case(db, user, test_case_id, write=True)
     changes = payload.model_dump(exclude_unset=True)
     for key, value in changes.items():
         if value is not None:
@@ -100,20 +158,25 @@ def update_test_case(test_case_id: UUID, payload: TestCasePatch, db: Session = D
 
 
 @router.delete("/api/v1/test-cases/{test_case_id}", status_code=204)
-def delete_test_case(test_case_id: UUID, db: Session = Depends(get_db)) -> Response:
-    case = db.get(TestCase, test_case_id)
-    if not case:
-        raise HTTPException(404, "Test case not found.")
+def delete_test_case(
+    test_case_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Response:
+    case = _authorized_case(db, user, test_case_id, write=True)
     db.delete(case)
     db.commit()
     return Response(status_code=204)
 
 
 @router.post("/api/v1/specifications/{specification_id}/test-runs", response_model=TestRunOut, status_code=201)
-def execute_all_tests(specification_id: UUID, payload: TestRunRequest, db: Session = Depends(get_db)) -> TestRunOut:
-    specification = db.get(ApiSpecification, specification_id)
-    if not specification:
-        raise HTTPException(404, "Specification not found.")
+def execute_all_tests(
+    specification_id: UUID,
+    payload: TestRunRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> TestRunOut:
+    specification = _authorized_specification(db, user, specification_id, write=True)
     cases = db.query(TestCase).filter(TestCase.specification_id == specification_id, TestCase.is_enabled.is_(True)).all()
     if not payload.include_negative_tests:
         cases = [case for case in cases if case.category != "NEGATIVE_TEST"]
@@ -122,7 +185,11 @@ def execute_all_tests(specification_id: UUID, payload: TestRunRequest, db: Sessi
 
 
 @router.post("/api/v1/test-runs/execute-selected", response_model=TestRunOut, status_code=201)
-def execute_selected_tests(payload: SelectedTestRunRequest, db: Session = Depends(get_db)) -> TestRunOut:
+def execute_selected_tests(
+    payload: SelectedTestRunRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> TestRunOut:
     cases = db.query(TestCase).filter(
         TestCase.id.in_(payload.test_case_ids),
         TestCase.is_enabled.is_(True),
@@ -134,9 +201,7 @@ def execute_selected_tests(payload: SelectedTestRunRequest, db: Session = Depend
         raise HTTPException(400, "Selected test cases must belong to one specification.")
     if not payload.include_negative_tests:
         cases = [case for case in cases if case.category != "NEGATIVE_TEST"]
-    specification = db.get(ApiSpecification, next(iter(specification_ids)))
-    if not specification:
-        raise HTTPException(404, "Specification not found.")
+    specification = _authorized_specification(db, user, next(iter(specification_ids)), write=True)
     run = _execute(db, specification, cases, payload)
     return TestRunOut.model_validate(run)
 
@@ -147,17 +212,20 @@ def list_test_runs(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> list[TestRunOut]:
-    if not db.get(ApiSpecification, specification_id):
-        raise HTTPException(404, "Specification not found.")
+    _authorized_specification(db, user, specification_id)
     runs = db.query(TestRun).filter(TestRun.specification_id == specification_id).order_by(TestRun.started_at.desc()).offset(offset).limit(limit).all()
     return [TestRunOut.model_validate(item) for item in runs]
 
 
 @router.get("/api/v1/specifications/{specification_id}/testing-summary")
-def testing_summary(specification_id: UUID, db: Session = Depends(get_db)) -> dict:
-    if not db.get(ApiSpecification, specification_id):
-        raise HTTPException(404, "Specification not found.")
+def testing_summary(
+    specification_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    _authorized_specification(db, user, specification_id)
     case_count = db.query(func.count(TestCase.id)).filter(
         TestCase.specification_id == specification_id
     ).scalar() or 0
@@ -199,10 +267,12 @@ def testing_summary(specification_id: UUID, db: Session = Depends(get_db)) -> di
 
 
 @router.get("/api/v1/test-runs/{test_run_id}", response_model=TestRunOut)
-def get_test_run(test_run_id: UUID, db: Session = Depends(get_db)) -> TestRunOut:
-    run = db.get(TestRun, test_run_id)
-    if not run:
-        raise HTTPException(404, "Test run not found.")
+def get_test_run(
+    test_run_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> TestRunOut:
+    run = _authorized_run(db, user, test_run_id)
     return TestRunOut.model_validate(run)
 
 
@@ -212,26 +282,33 @@ def get_test_results(
     limit: int = Query(default=200, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> list[TestResultOut]:
-    if not db.get(TestRun, test_run_id):
-        raise HTTPException(404, "Test run not found.")
+    _authorized_run(db, user, test_run_id)
     results = db.query(TestResult).filter(TestResult.test_run_id == test_run_id).order_by(TestResult.executed_at).offset(offset).limit(limit).all()
     return [TestResultOut.model_validate(item) for item in results]
 
 
 @router.get("/api/v1/test-results/{result_id}", response_model=TestResultOut)
-def get_test_result(result_id: UUID, db: Session = Depends(get_db)) -> TestResultOut:
+def get_test_result(
+    result_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> TestResultOut:
     result = db.get(TestResult, result_id)
     if not result:
         raise HTTPException(404, "Test result not found.")
+    _authorized_run(db, user, result.test_run_id)
     return TestResultOut.model_validate(result)
 
 
 @router.delete("/api/v1/test-runs/{test_run_id}", status_code=204)
-def delete_test_run(test_run_id: UUID, db: Session = Depends(get_db)) -> Response:
-    run = db.get(TestRun, test_run_id)
-    if not run:
-        raise HTTPException(404, "Test run not found.")
+def delete_test_run(
+    test_run_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Response:
+    run = _authorized_run(db, user, test_run_id, write=True)
     db.delete(run)
     db.commit()
     return Response(status_code=204)

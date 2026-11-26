@@ -20,7 +20,17 @@ import ImportDialog from "./components/ImportDialog.jsx";
 import { ChangesPage, ExplorerPage, ProjectsPage } from "./pages/Stage2Pages.jsx";
 import TestingPage from "./pages/TestingPage.jsx";
 import MonitoringPage from "./pages/MonitoringPage.jsx";
-import { API_DOCS_URL, fetchHealth, getProjects } from "./services/api.js";
+import AuthPage from "./pages/AuthPage.jsx";
+import ProfilePage from "./pages/ProfilePage.jsx";
+import {
+  acceptProjectInvite,
+  API_DOCS_URL,
+  fetchHealth,
+  getProjects,
+  logout as endSession,
+  refreshAuthSession,
+  setAccessToken,
+} from "./services/api.js";
 
 export default function App() {
   const [activeSection, setActiveSection] = useState("overview");
@@ -35,8 +45,69 @@ export default function App() {
   const [isProjectMenuOpen, setIsProjectMenuOpen] = useState(false);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [authStatus, setAuthStatus] = useState("loading");
+  const [authMode, setAuthMode] = useState("login");
+  const [currentUser, setCurrentUser] = useState(null);
+  const [resetToken, setResetToken] = useState("");
+  const [verificationToken, setVerificationToken] = useState("");
+  const [inviteToken, setInviteToken] = useState("");
+  const [workspaceNotice, setWorkspaceNotice] = useState("");
   const searchInputRef = useRef(null);
+  const acceptedInviteTokenRef = useRef("");
   const activePage = navigation.find((item) => item.id === activeSection) ?? navigation[0];
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.hash.slice(1));
+    const token = params.get("reset_token");
+    const verification = params.get("verify_token");
+    const invite = params.get("invite_token");
+    if (token) {
+      setResetToken(token);
+      setAuthMode("reset");
+    }
+    if (verification) {
+      setVerificationToken(verification);
+      setAuthMode("verify");
+    }
+    if (invite) setInviteToken(invite);
+    if (token || verification || invite) {
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+    }
+
+    let active = true;
+    if (verification) {
+      setAuthStatus("signed-out");
+      return () => { active = false; };
+    }
+    refreshAuthSession()
+      .then((session) => {
+        if (!active) return;
+        if (session?.user) {
+          setCurrentUser(session.user);
+          setAuthStatus("signed-in");
+        } else {
+          setAuthStatus("signed-out");
+        }
+      })
+      .catch(() => {
+        if (active) setAuthStatus("signed-out");
+      });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    function handleAuthExpiry() {
+      setAccessToken("");
+      setCurrentUser(null);
+      setProjects([]);
+      setSelectedProjectId("");
+      setActiveSection("overview");
+      setAuthStatus("signed-out");
+      setAuthMode("login");
+    }
+    window.addEventListener("contractiq:auth-expired", handleAuthExpiry);
+    return () => window.removeEventListener("contractiq:auth-expired", handleAuthExpiry);
+  }, []);
 
   const refreshProjects = useCallback(async (preferredId = "") => {
     const items = await getProjects();
@@ -63,8 +134,41 @@ export default function App() {
   }, [checkConnection]);
 
   useEffect(() => {
+    if (authStatus !== "signed-in") {
+      setProjects([]);
+      setSelectedProjectId("");
+      return;
+    }
     void refreshProjects().catch((error) => setProjectLoadError(error.message));
-  }, [refreshProjects]);
+  }, [authStatus, refreshProjects]);
+
+  useEffect(() => {
+    if (authStatus !== "signed-in" || !inviteToken) return undefined;
+    if (acceptedInviteTokenRef.current === inviteToken) return undefined;
+    acceptedInviteTokenRef.current = inviteToken;
+    let active = true;
+    acceptProjectInvite(inviteToken)
+      .then((project) => {
+        if (!active) return;
+        setWorkspaceNotice(`Joined ${project.name}.`);
+        setInviteToken("");
+        void refreshProjects(project.id).catch((error) => setProjectLoadError(error.message));
+      })
+      .catch((error) => {
+        if (active) {
+          setWorkspaceNotice("");
+          setProjectLoadError(`Invitation could not be accepted: ${error.message}`);
+          setInviteToken("");
+        }
+      });
+    return () => { active = false; };
+  }, [authStatus, inviteToken, refreshProjects]);
+
+  useEffect(() => {
+    if (!workspaceNotice) return undefined;
+    const timer = window.setTimeout(() => setWorkspaceNotice(""), 5000);
+    return () => window.clearTimeout(timer);
+  }, [workspaceNotice]);
 
   useEffect(() => {
     function onKeyDown(event) {
@@ -101,6 +205,62 @@ export default function App() {
   function openCommand() {
     setSearchQuery("");
     setOverlay("command");
+  }
+
+  function handleAuthenticated(session) {
+    setAccessToken(session.access_token);
+    setCurrentUser(session.user);
+    setAuthStatus("signed-in");
+    setAuthMode("login");
+    setResetToken("");
+    setVerificationToken("");
+    setProjectLoadError("");
+  }
+
+  async function handleLogout() {
+    try {
+      await endSession();
+    } catch (error) {
+      setProjectLoadError(error.message);
+    } finally {
+      setAccessToken("");
+      setCurrentUser(null);
+      setProjects([]);
+      setSelectedProjectId("");
+      setActiveSection("overview");
+      setAuthStatus("signed-out");
+      setAuthMode("login");
+      setIsProfileOpen(false);
+    }
+  }
+
+  function handlePasswordChanged() {
+    setAccessToken("");
+    setCurrentUser(null);
+    setProjects([]);
+    setSelectedProjectId("");
+    setActiveSection("overview");
+    setAuthStatus("signed-out");
+    setAuthMode("login");
+  }
+
+  if (authStatus === "loading") {
+    return <main className="auth-page"><div className="auth-loading" role="status">Restoring your secure session…</div></main>;
+  }
+  if (authStatus !== "signed-in") {
+    return (
+      <AuthPage
+        mode={authMode}
+        resetToken={resetToken}
+        verificationToken={verificationToken}
+        onModeChange={(mode) => {
+          setAuthMode(mode);
+          if (mode !== "reset") setResetToken("");
+          if (mode !== "verify") setVerificationToken("");
+        }}
+        onAuthenticated={handleAuthenticated}
+      />
+    );
   }
 
   return (
@@ -211,13 +371,15 @@ export default function App() {
                   setIsNotificationOpen(false);
                 }}
               >
-                <span className="profile-avatar">D</span><ChevronDown size={13} />
+                <span className="profile-avatar">{currentUser?.full_name?.[0]?.toUpperCase() || "U"}</span><ChevronDown size={13} />
               </Button>
               {isProfileOpen && (
                 <div className="popover profile-popover" role="menu" aria-label="Profile menu">
-                  <div className="profile-summary"><span className="profile-avatar">D</span><span><strong>Developer</strong><small>Local workspace</small></span></div>
+                  <div className="profile-summary"><span className="profile-avatar">{currentUser?.full_name?.[0]?.toUpperCase() || "U"}</span><span><strong>{currentUser?.full_name}</strong><small>{currentUser?.email}</small></span></div>
+                  <button type="button" role="menuitem" onClick={() => navigate("profile")}><UserRound size={15} /> Profile</button>
                   <button type="button" role="menuitem" onClick={() => navigate("settings")}><Settings2 size={15} /> Settings</button>
-                  <a href={API_DOCS_URL} target="_blank" rel="noreferrer"><UserRound size={15} /> API documentation</a>
+                  <a href={API_DOCS_URL} target="_blank" rel="noreferrer"><Command size={15} /> API documentation</a>
+                  <button type="button" role="menuitem" onClick={handleLogout}>Sign out</button>
                 </div>
               )}
             </div>
@@ -228,22 +390,34 @@ export default function App() {
           {activeSection === "overview" ? (
             <Overview connectionState={connectionState} onImport={() => setOverlay("import")} onNavigate={navigate} />
           ) : activeSection === "projects" ? (
-            <ProjectsPage onImport={() => setOverlay("import")} onOpenExplorer={(projectId) => { setSelectedProjectId(projectId); setExplorerProjectId(projectId); navigate("explorer"); }} />
+            <ProjectsPage
+              onImport={() => setOverlay("import")}
+              onOpenExplorer={(projectId) => { setSelectedProjectId(projectId); setExplorerProjectId(projectId); navigate("explorer"); }}
+              onProjectsChanged={(preferredId) => void refreshProjects(preferredId).catch((error) => setProjectLoadError(error.message))}
+            />
           ) : activeSection === "explorer" ? (
             <ExplorerPage onImport={() => setOverlay("import")} initialProjectId={explorerProjectId} />
           ) : activeSection === "changes" ? (
             <ChangesPage />
           ) : activeSection === "testRuns" ? (
             <TestingPage />
+          ) : activeSection === "profile" ? (
+            <ProfilePage
+              user={currentUser}
+              onProfileUpdated={setCurrentUser}
+              onPasswordChanged={handlePasswordChanged}
+            />
           ) : ["monitoring", "performance", "errors", "insights", "live", "alerts"].includes(activeSection) ? (
             <MonitoringPage section={activeSection} projectId={selectedProjectId} />
           ) : (
             <PlaceholderPage section={activeSection} onImport={() => setOverlay("import")} />
           )}
+          {workspaceNotice && <div className="workspace-notice" role="status">{workspaceNotice}</div>}
+          {projectLoadError && <div className="stage-error" role="alert">{projectLoadError}</div>}
         </div>
         <footer className="main-footer">
-          <span>ContractIQ <i /> Stage 5 real-time monitoring</span>
-          <span>Local development environment</span>
+          <span>ContractIQ <i /> API quality workspace</span>
+          <span>{currentUser?.email}</span>
         </footer>
       </main>
 

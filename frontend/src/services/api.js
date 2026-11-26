@@ -5,8 +5,62 @@ if (!configuredBaseUrl) {
 }
 
 const API_BASE_URL = configuredBaseUrl.replace(/\/$/, "");
-const MONITORING_TOKEN_KEY = "contractiqMonitoringToken";
+const CSRF_COOKIE_NAME = "contractiq_csrf";
 export const API_DOCS_URL = `${API_BASE_URL}/docs`;
+let accessToken = "";
+let refreshPromise = null;
+
+export function getAccessToken() {
+  return accessToken;
+}
+
+export function setAccessToken(token) {
+  accessToken = token || "";
+}
+
+export function clearAccessToken() {
+  accessToken = "";
+}
+
+function readCookie(name) {
+  if (typeof document === "undefined") return "";
+  const encodedName = `${encodeURIComponent(name)}=`;
+  const entry = document.cookie.split("; ").find((cookie) => cookie.startsWith(encodedName));
+  return entry ? decodeURIComponent(entry.slice(encodedName.length)) : "";
+}
+
+export async function refreshAuthSession() {
+  if (refreshPromise) return refreshPromise;
+  const csrfToken = readCookie(CSRF_COOKIE_NAME);
+  if (!csrfToken) {
+    clearAccessToken();
+    return null;
+  }
+  refreshPromise = (async () => {
+    let response;
+    try {
+      response = await fetch(`${API_BASE_URL}/api/v1/auth/refresh`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "X-CSRF-Token": csrfToken, Accept: "application/json" },
+      });
+    } catch {
+      throw new Error("Unable to reach the ContractIQ backend.");
+    }
+    if (!response.ok) {
+      clearAccessToken();
+      return null;
+    }
+    const payload = await response.json();
+    setAccessToken(payload.access_token);
+    return payload;
+  })();
+  try {
+    return await refreshPromise;
+  } finally {
+    refreshPromise = null;
+  }
+}
 
 export async function fetchHealth() {
   const response = await fetch(`${API_BASE_URL}/health`, {
@@ -25,13 +79,30 @@ export async function fetchHealth() {
   return payload;
 }
 
-async function request(path, options = {}) {
+async function request(path, options = {}, retryAfterRefresh = true) {
   let response;
+  const headers = new Headers(options.headers || {});
+  if (accessToken && !path.startsWith("/api/v1/auth/")) {
+    headers.set("Authorization", `Bearer ${accessToken}`);
+  }
   try {
-    response = await fetch(`${API_BASE_URL}${path}`, options);
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...options,
+      headers,
+      credentials: "include",
+    });
   } catch (error) {
     throw new Error("Unable to reach the ContractIQ backend.");
   }
+  if (response.status === 401 && accessToken && !path.startsWith("/api/v1/auth/")) {
+    if (retryAfterRefresh) {
+      const renewed = await refreshAuthSession().catch(() => null);
+      if (renewed) return request(path, options, false);
+    }
+    clearAccessToken();
+    if (typeof window !== "undefined") window.dispatchEvent(new Event("contractiq:auth-expired"));
+  }
+  if (response.status === 204) return null;
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(payload.detail || `Backend returned HTTP ${response.status}`);
@@ -39,8 +110,92 @@ async function request(path, options = {}) {
   return payload;
 }
 
-export function getProjects() {
-  return request("/api/v1/projects");
+export function getProjects({ includeArchived = false } = {}) {
+  const query = includeArchived ? "?include_archived=true" : "";
+  return request(`/api/v1/projects${query}`);
+}
+
+export function createAccount(payload) {
+  return request("/api/v1/auth/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function requestEmailVerification(email) {
+  return request("/api/v1/auth/email-verification/request", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+}
+
+export function confirmEmailVerification(token) {
+  return request("/api/v1/auth/email-verification/confirm", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+}
+
+export function login(payload) {
+  return request("/api/v1/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function logout() {
+  const csrfToken = readCookie(CSRF_COOKIE_NAME);
+  try {
+    await request("/api/v1/auth/logout", {
+      method: "POST",
+      headers: csrfToken ? { "X-CSRF-Token": csrfToken } : {},
+    });
+  } finally {
+    clearAccessToken();
+  }
+}
+
+export function requestPasswordReset(email) {
+  return request("/api/v1/auth/password-reset/request", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+}
+
+export function confirmPasswordReset(token, newPassword) {
+  return request("/api/v1/auth/password-reset/confirm", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, new_password: newPassword }),
+  });
+}
+
+export function getProfile() {
+  return request("/api/v1/auth/me");
+}
+
+export function updateProfile(payload) {
+  return request("/api/v1/auth/me", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function changePassword(payload) {
+  return request("/api/v1/auth/change-password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      current_password: payload.currentPassword,
+      new_password: payload.newPassword,
+    }),
+  });
 }
 
 export function createProject(payload) {
@@ -48,6 +203,79 @@ export function createProject(payload) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+  });
+}
+
+export function updateProject(projectId, payload) {
+  return request(`/api/v1/projects/${projectId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function archiveProject(projectId) {
+  return request(`/api/v1/projects/${projectId}/archive`, { method: "POST" });
+}
+
+export function restoreProject(projectId) {
+  return request(`/api/v1/projects/${projectId}/restore`, { method: "POST" });
+}
+
+export function deleteProject(projectId) {
+  return request(`/api/v1/projects/${projectId}?confirm=true`, { method: "DELETE" });
+}
+
+export function getProjectDashboard(projectId) {
+  return request(`/api/v1/projects/${projectId}/dashboard`);
+}
+
+export function getProjectMembers(projectId) {
+  return request(`/api/v1/projects/${projectId}/members`);
+}
+
+export function inviteProjectMember(projectId, email, role) {
+  return request(`/api/v1/projects/${projectId}/invites`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, role }),
+  });
+}
+
+export function getProjectInvites(projectId) {
+  return request(`/api/v1/projects/${projectId}/invites`);
+}
+
+export function revokeProjectInvite(projectId, inviteId) {
+  return request(`/api/v1/projects/${projectId}/invites/${inviteId}`, { method: "DELETE" });
+}
+
+export function updateProjectMemberRole(projectId, userId, role) {
+  return request(`/api/v1/projects/${projectId}/members/${userId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ role }),
+  });
+}
+
+export function removeProjectMember(projectId, userId) {
+  return request(`/api/v1/projects/${projectId}/members/${userId}`, { method: "DELETE" });
+}
+
+export function transferProjectOwnership(projectId, userId) {
+  const query = new URLSearchParams({ new_owner_id: userId });
+  return request(`/api/v1/projects/${projectId}/transfer-ownership?${query}`, { method: "POST" });
+}
+
+export function getProjectActivity(projectId, page = 1, pageSize = 30) {
+  return request(`/api/v1/projects/${projectId}/activity?${queryString({ page, page_size: pageSize })}`);
+}
+
+export function acceptProjectInvite(token) {
+  return request("/api/v1/projects/invites/accept", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
   });
 }
 
@@ -113,14 +341,25 @@ export function getCompatibilitySummary(comparisonId) {
   return request(`/api/v1/compatibility/${comparisonId}/summary`);
 }
 
-export async function downloadCompatibilityJSON(comparisonId) {
+export async function downloadCompatibilityJSON(comparisonId, retryAfterRefresh = true) {
   let response;
+  const headers = new Headers({ Accept: "application/json" });
+  if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
   try {
     response = await fetch(`${API_BASE_URL}/api/v1/compatibility/${comparisonId}/report/json`, {
-      headers: { Accept: "application/json" },
+      headers,
+      credentials: "include",
     });
   } catch {
     throw new Error("Unable to reach the ContractIQ backend.");
+  }
+  if (response.status === 401 && accessToken) {
+    if (retryAfterRefresh) {
+      const renewed = await refreshAuthSession().catch(() => null);
+      if (renewed) return downloadCompatibilityJSON(comparisonId, false);
+    }
+    clearAccessToken();
+    if (typeof window !== "undefined") window.dispatchEvent(new Event("contractiq:auth-expired"));
   }
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
@@ -202,23 +441,7 @@ export function getTestingSummary(specificationId) {
 }
 
 function monitoringRequest(path, options = {}) {
-  const headers = new Headers(options.headers || {});
-  const token = getMonitoringAuthToken();
-  if (token) headers.set("Authorization", `Bearer ${token}`);
-  headers.set("Accept", "application/json");
-  return request(path, { ...options, headers });
-}
-
-export function getMonitoringAuthToken() {
-  return typeof window === "undefined" ? "" : window.sessionStorage.getItem(MONITORING_TOKEN_KEY) || "";
-}
-
-export function setMonitoringAuthToken(token) {
-  if (typeof window !== "undefined") window.sessionStorage.setItem(MONITORING_TOKEN_KEY, token.trim());
-}
-
-export function clearMonitoringAuthToken() {
-  if (typeof window !== "undefined") window.sessionStorage.removeItem(MONITORING_TOKEN_KEY);
+  return request(path, options);
 }
 
 function queryString(values) {
@@ -314,8 +537,8 @@ export function updateMonitoringAlert(projectId, alertId, action) {
 }
 
 export function createMonitoringSocket(projectId) {
-  const token = getMonitoringAuthToken();
-  if (!token) throw new Error("Enter the monitoring access token to connect to the live stream.");
+  const token = getAccessToken();
+  if (!token) throw new Error("Sign in again to restore access to the live monitoring stream.");
   const url = new URL(`${API_BASE_URL}/ws/v1/projects/${projectId}/monitoring/live`);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   return new WebSocket(url, [

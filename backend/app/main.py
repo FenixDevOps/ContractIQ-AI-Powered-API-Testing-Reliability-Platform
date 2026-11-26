@@ -2,9 +2,12 @@
 
 import asyncio
 import logging
+import re
+import time
+import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import inspect
 
@@ -16,6 +19,7 @@ from app.config import (
 )
 from app.database.connection import engine
 from app.routes.health import router as health_router
+from app.routes.auth import router as auth_router
 from app.routes.projects import router as projects_router
 from app.routes.specifications import router as specifications_router
 from app.routes.endpoints import router as endpoints_router
@@ -26,6 +30,7 @@ from app.services.monitoring_events import event_hub
 from app.services.monitoring_runner import monitoring_scheduler
 
 logger = logging.getLogger(__name__)
+REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
 
 def _monitoring_schema_available() -> bool:
@@ -57,8 +62,30 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
+    allow_headers=["Authorization", "Content-Type", "X-CSRF-Token", "X-Request-ID"],
+    expose_headers=["X-Request-ID"],
 )
+
+
+@app.middleware("http")
+async def add_request_correlation(request: Request, call_next):
+    supplied_id = request.headers.get("X-Request-ID", "")
+    request_id = supplied_id if REQUEST_ID_PATTERN.fullmatch(supplied_id) else uuid.uuid4().hex
+    request.state.request_id = request_id
+    started_at = time.perf_counter()
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    logger.info(
+        "http_request_completed",
+        extra={
+            "request_id": request_id,
+            "method": request.method,
+            "path": request.url.path,
+            "status_code": response.status_code,
+            "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+        },
+    )
+    return response
 
 
 @app.get("/", summary="Get project information")
@@ -66,12 +93,13 @@ async def root() -> dict[str, str]:
     return {
         "project": "ContractIQ",
         "description": "AI-powered API testing and reliability platform",
-        "stage": "Stage 5: Real-Time API Monitoring",
+        "stage": "Stage 6: Production Quality",
         "docs": "/docs",
     }
 
 
 app.include_router(health_router)
+app.include_router(auth_router)
 app.include_router(projects_router)
 app.include_router(specifications_router)
 app.include_router(endpoints_router)

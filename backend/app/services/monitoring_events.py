@@ -19,7 +19,6 @@ class MonitoringEventHub:
         self._loop = loop
 
     async def connect(self, project_id: UUID, websocket: WebSocket) -> None:
-        await websocket.accept(subprotocol="contractiq.monitoring.v1")
         self._connections[project_id].add(websocket)
 
     def disconnect(self, project_id: UUID, websocket: WebSocket) -> None:
