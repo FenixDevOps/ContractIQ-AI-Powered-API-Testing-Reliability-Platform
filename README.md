@@ -1,6 +1,6 @@
 # ContractIQ
 
-ContractIQ is a local-first API testing and reliability platform foundation. It includes the Stage 1 foundation, Stage 2 OpenAPI import/version management, and Stage 3 contract-driven test generation and opt-in API execution. Performance telemetry, advanced breaking-change analysis, and AI features are not included.
+ContractIQ is a local-first API testing and reliability platform. It includes the Stage 1 foundation, Stage 2 OpenAPI import/version management, Stage 3 contract-driven test generation and opt-in API execution, and Stage 4 deterministic breaking-change detection with persisted compatibility reports. Performance telemetry and AI-driven features are not included.
 
 ## Implemented Features
 
@@ -13,6 +13,7 @@ ContractIQ is a local-first API testing and reliability platform foundation. It 
 - API health metrics, trend chart, recent executions, and change panels show explicit empty states until real product data exists.
 - Safe OpenAPI 3.0/3.1 JSON/YAML import, project/specification persistence, endpoint exploration, versions, and structural comparison.
 - OpenAPI-derived API test generation, HTTPX execution against explicitly allowlisted hosts, response validation, persisted test results, and report history.
+- Deterministic OpenAPI compatibility comparisons, severity and compatibility classification, indicative scoring, persisted comparison history, filtering, and JSON report export.
 - Pytest coverage for health, imports, generation, schema validation, HTTPX mock execution, and run history.
 
 ## Technology
@@ -241,3 +242,21 @@ For a staging API, allow only its exact hostname and required port, keeping priv
 5. Inspect result details and saved execution history. Network tests in the test suite use mocks and never call production APIs.
 
 See [docs/automated-testing-engine.md](docs/automated-testing-engine.md) for generation behavior, validation, security constraints, environment settings, request examples, and limitations.
+
+## Stage 4: Breaking Change Detection
+
+Compare two imported OpenAPI versions in **Contract Changes**. The engine analyzes normalized endpoint paths, parameters, request and response schemas, local component references, response codes, content types, enums, constraints, security, and nullability. Findings are persisted with their severity, compatibility status, explanation, and recommended action. The dashboard provides comparison history, filters, side-by-side old/new values, a printable report, and downloadable JSON.
+
+### Stage 4 API routes
+
+- `POST /api/v1/compatibility/compare`
+- `GET /api/v1/projects/{project_id}/compatibility?page=1&page_size=20`
+- `GET /api/v1/compatibility/{comparison_id}`
+- `GET /api/v1/compatibility/{comparison_id}/changes` (severity, compatibility, category, method, and path filters; paginated)
+- `GET /api/v1/compatibility/{comparison_id}/summary`
+- `GET /api/v1/compatibility/{comparison_id}/report/json`
+- `DELETE /api/v1/compatibility/{comparison_id}`
+
+Apply database changes with `python -m alembic upgrade head` from `backend`. PDF export is not included; use the report's print action to print or save a browser-generated PDF.
+
+See [docs/breaking-change-detection.md](docs/breaking-change-detection.md) for comparison rules, score weights, persistence, API examples, reference handling, test coverage, and limitations.

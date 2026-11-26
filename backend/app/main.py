@@ -9,11 +9,12 @@ from app.routes.projects import router as projects_router
 from app.routes.specifications import router as specifications_router
 from app.routes.endpoints import router as endpoints_router
 from app.routes.testing import router as testing_router
+from app.routes.compatibility import router as compatibility_router
 
 app = FastAPI(
     title=APP_NAME,
     version=APP_VERSION,
-    description="OpenAPI contract import and automated API testing for ContractIQ.",
+    description="OpenAPI contract import, compatibility analysis, and automated API testing for ContractIQ.",
 )
 
 app.add_middleware(
@@ -30,7 +31,7 @@ async def root() -> dict[str, str]:
     return {
         "project": "ContractIQ",
         "description": "AI-powered API testing and reliability platform",
-        "stage": "Stage 3: Automated API Testing",
+        "stage": "Stage 4: Breaking Change Detection",
         "docs": "/docs",
     }
 
@@ -40,3 +41,4 @@ app.include_router(projects_router)
 app.include_router(specifications_router)
 app.include_router(endpoints_router)
 app.include_router(testing_router)
+app.include_router(compatibility_router)
