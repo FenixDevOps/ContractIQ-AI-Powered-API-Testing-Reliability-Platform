@@ -1,0 +1,68 @@
+services:
+  database:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-contractiq}
+      POSTGRES_USER: ${POSTGRES_USER:-contractiq}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the root .env file}
+    volumes:
+      - contractiq_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      CONTRACTIQ_ENVIRONMENT: production
+      CONTRACTIQ_SECRET_KEY: ${CONTRACTIQ_SECRET_KEY:?Set CONTRACTIQ_SECRET_KEY in the root .env file}
+      CONTRACTIQ_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-contractiq}:${POSTGRES_PASSWORD}@database:5432/${POSTGRES_DB:-contractiq}
+      CONTRACTIQ_ALLOWED_ORIGINS: ${CONTRACTIQ_ALLOWED_ORIGINS:?Set CONTRACTIQ_ALLOWED_ORIGINS in the root .env file}
+      CONTRACTIQ_FRONTEND_BASE_URL: ${CONTRACTIQ_FRONTEND_BASE_URL:?Set CONTRACTIQ_FRONTEND_BASE_URL in the root .env file}
+      CONTRACTIQ_AUTH_COOKIE_SECURE: ${CONTRACTIQ_AUTH_COOKIE_SECURE:-true}
+      CONTRACTIQ_AUTH_COOKIE_SAMESITE: ${CONTRACTIQ_AUTH_COOKIE_SAMESITE:-lax}
+      CONTRACTIQ_AUTH_ALLOW_REGISTRATION: ${CONTRACTIQ_AUTH_ALLOW_REGISTRATION:-false}
+      CONTRACTIQ_AUTH_REQUIRE_EMAIL_VERIFICATION: ${CONTRACTIQ_AUTH_REQUIRE_EMAIL_VERIFICATION:-true}
+      CONTRACTIQ_EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS: ${CONTRACTIQ_EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS:-24}
+      CONTRACTIQ_SMTP_HOST: ${CONTRACTIQ_SMTP_HOST:-}
+      CONTRACTIQ_SMTP_PORT: ${CONTRACTIQ_SMTP_PORT:-587}
+      CONTRACTIQ_SMTP_USERNAME: ${CONTRACTIQ_SMTP_USERNAME:-}
+      CONTRACTIQ_SMTP_PASSWORD: ${CONTRACTIQ_SMTP_PASSWORD:-}
+      CONTRACTIQ_SMTP_FROM_EMAIL: ${CONTRACTIQ_SMTP_FROM_EMAIL:-}
+      CONTRACTIQ_SMTP_USE_TLS: ${CONTRACTIQ_SMTP_USE_TLS:-true}
+      CONTRACTIQ_MONITORING_SCHEDULER_ENABLED: ${CONTRACTIQ_MONITORING_SCHEDULER_ENABLED:-true}
+    depends_on:
+      database:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: /
+    environment:
+      CONTRACTIQ_PUBLIC_HOST: ${CONTRACTIQ_PUBLIC_HOST:?Set CONTRACTIQ_PUBLIC_HOST in the root .env file}
+      NGINX_ENVSUBST_FILTER: ^CONTRACTIQ_PUBLIC_HOST$
+    ports:
+      - "${CONTRACTIQ_HTTP_PORT:-80}:8080"
+      - "${CONTRACTIQ_HTTPS_PORT:-443}:8443"
+    volumes:
+      - "${CONTRACTIQ_TLS_CERT_PATH:?Set CONTRACTIQ_TLS_CERT_PATH in the root .env file}:/etc/nginx/tls/fullchain.pem:ro"
+      - "${CONTRACTIQ_TLS_KEY_PATH:?Set CONTRACTIQ_TLS_KEY_PATH in the root .env file}:/etc/nginx/tls/privkey.pem:ro"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  contractiq_postgres_data:

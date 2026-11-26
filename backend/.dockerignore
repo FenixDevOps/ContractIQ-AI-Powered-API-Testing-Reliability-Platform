@@ -1,0 +1,12 @@
+.env
+.venv
+__pycache__
+.pytest_cache
+*.db
+*.sqlite
+*.sqlite3
+*.key
+*.pem
+*.p12
+*.pfx
+tests

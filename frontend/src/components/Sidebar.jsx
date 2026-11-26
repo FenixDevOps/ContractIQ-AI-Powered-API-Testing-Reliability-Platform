@@ -8,6 +8,8 @@ import {
   FlaskConical,
   Gauge,
   LayoutDashboard,
+  Radio,
+  UserRound,
   Settings2,
   ShieldAlert,
   Sparkles,
@@ -22,9 +24,13 @@ export const navigation = [
   { id: "explorer", label: "API Explorer", icon: Braces, group: "workspace" },
   { id: "testRuns", label: "Test Runs", icon: FlaskConical, group: "quality" },
   { id: "changes", label: "Breaking Changes", icon: ShieldAlert, group: "quality" },
+  { id: "monitoring", label: "Monitoring", icon: Activity, group: "quality" },
   { id: "performance", label: "Performance", icon: ChartNoAxesCombined, group: "quality" },
+  { id: "errors", label: "Errors", icon: ShieldAlert, group: "quality" },
   { id: "insights", label: "AI Insights", icon: Sparkles, group: "intelligence" },
+  { id: "live", label: "Live Monitoring", icon: Radio, group: "intelligence" },
   { id: "alerts", label: "Alerts", icon: BellRing, group: "intelligence" },
+  { id: "profile", label: "Profile", icon: UserRound, group: "system" },
   { id: "settings", label: "Settings", icon: Settings2, group: "system" },
 ];
 
@@ -85,7 +91,7 @@ export default function Sidebar({ activeSection, onNavigate, isOpen, onClose, co
           <a className="help-link" href={API_DOCS_URL} target="_blank" rel="noreferrer">
             <CircleHelp size={15} /> API documentation <span>↗</span>
           </a>
-          <div className="sidebar-version"><span>CONTRACTIQ</span><span>STAGE 4</span></div>
+          <div className="sidebar-version"><span>CONTRACTIQ</span><span>STAGE 6</span></div>
         </div>
       </aside>
     </>

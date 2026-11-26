@@ -1,59 +1,297 @@
-import { useEffect, useMemo, useState } from "react";
-import { ArrowRight, Braces, ChevronLeft, ChevronRight, Download, FileUp, GitCompareArrows, Printer, RefreshCw, Search, ShieldAlert, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Archive, ArrowRight, Braces, ChevronLeft, ChevronRight, Crown, Download, FileUp, GitCompareArrows, Pencil, Printer, RefreshCw, Search, ShieldAlert, Trash2, UserPlus, Users, X } from "lucide-react";
 import { Button } from "../components/ui/button.jsx";
 import {
   compareSpecifications,
+  archiveProject,
+  createProject,
+  deleteProject,
   deleteCompatibilityComparison,
   downloadCompatibilityJSON,
   getCompatibilityChanges,
   getCompatibilityHistory,
   getCompatibilitySummary,
   getProjectSpecifications,
+  getProjectActivity,
+  getProjectDashboard,
+  getProjectInvites,
+  getProjectMembers,
   getProjects,
   getSpecificationEndpoints,
   importSpecification,
+  inviteProjectMember,
+  removeProjectMember,
+  restoreProject,
+  revokeProjectInvite,
+  updateProject,
+  updateProjectMemberRole,
+  transferProjectOwnership,
 } from "../services/api.js";
 
-export function ProjectsPage({ onImport, onOpenExplorer }) {
+export function ProjectsPage({ onImport, onOpenExplorer, onProjectsChanged }) {
   const [projects, setProjects] = useState([]);
+  const [query, setQuery] = useState("");
+  const [includeArchived, setIncludeArchived] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
+  const [editingProject, setEditingProject] = useState(null);
+  const [projectForm, setProjectForm] = useState({ name: "", description: "" });
+  const [dashboard, setDashboard] = useState(null);
+  const [teamProject, setTeamProject] = useState(null);
+  const [members, setMembers] = useState([]);
+  const [invites, setInvites] = useState([]);
+  const [inviteForm, setInviteForm] = useState({ email: "", role: "MEMBER" });
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
     setError("");
-    try { setProjects(await getProjects()); }
+    try { setProjects(await getProjects({ includeArchived })); }
     catch (caught) { setError(caught.message); }
     finally { setLoading(false); }
-  }
+  }, [includeArchived]);
 
-  async function changeHistoryPage(page) {
+  useEffect(() => { void load(); }, [load]);
+
+  const filteredProjects = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    return projects.filter((project) =>
+      `${project.name} ${project.description || ""}`.toLowerCase().includes(normalized)
+    );
+  }, [projects, query]);
+
+  async function saveProject(event) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
     try {
-      setLoading(true);
-      setHistory(await getCompatibilityHistory(projectId, page, 20));
-      setHistoryPage(page);
-    } catch (caught) { setError(caught.message); }
-    finally { setLoading(false); }
+      if (editingProject) {
+        await updateProject(editingProject.id, projectForm);
+        setNotice("Project details updated.");
+      } else {
+        await createProject(projectForm);
+        setNotice("Project created.");
+      }
+      setEditingProject(null);
+      setShowCreate(false);
+      setProjectForm({ name: "", description: "" });
+      await load();
+      onProjectsChanged?.();
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setSaving(false);
+    }
   }
 
-  useEffect(() => { void load(); }, []);
+  function beginEdit(project) {
+    setEditingProject(project);
+    setProjectForm({ name: project.name, description: project.description || "" });
+    setShowCreate(true);
+  }
+
+  async function changeArchiveState(project) {
+    setError("");
+    setNotice("");
+    try {
+      if (project.is_archived) {
+        await restoreProject(project.id);
+        setNotice(`${project.name} restored.`);
+      } else {
+        if (!window.confirm(`Archive ${project.name}? Its monitoring checks will be paused.`)) return;
+        await archiveProject(project.id);
+        setNotice(`${project.name} archived.`);
+      }
+      await load();
+      onProjectsChanged?.();
+    } catch (caught) {
+      setError(caught.message);
+    }
+  }
+
+  async function removeProject(project) {
+    if (!window.confirm(`Permanently delete ${project.name} and its associated API data? This cannot be undone.`)) return;
+    setError("");
+    setNotice("");
+    try {
+      await deleteProject(project.id);
+      setNotice(`${project.name} deleted.`);
+      if (dashboard?.project.id === project.id) setDashboard(null);
+      await load();
+      onProjectsChanged?.();
+    } catch (caught) {
+      setError(caught.message);
+    }
+  }
+
+  async function openDashboard(project) {
+    setTeamProject(null);
+    setError("");
+    try {
+      const [details, events] = await Promise.all([
+        getProjectDashboard(project.id),
+        getProjectActivity(project.id, 1, 10),
+      ]);
+      setDashboard({ ...details, activity: events });
+    } catch (caught) {
+      setError(caught.message);
+    }
+  }
+
+  async function openTeam(project) {
+    setDashboard(null);
+    setTeamProject(project);
+    setError("");
+    try {
+      const [currentMembers, currentInvites] = await Promise.all([
+        getProjectMembers(project.id),
+        project.current_user_role === "OWNER" || project.current_user_role === "ADMIN"
+          ? getProjectInvites(project.id)
+          : Promise.resolve([]),
+      ]);
+      setMembers(currentMembers);
+      setInvites(currentInvites);
+    } catch (caught) {
+      setError(caught.message);
+    }
+  }
+
+  async function sendInvite(event) {
+    event.preventDefault();
+    if (!teamProject) return;
+    setSaving(true);
+    setError("");
+    try {
+      await inviteProjectMember(teamProject.id, inviteForm.email, inviteForm.role);
+      setInviteForm({ email: "", role: "MEMBER" });
+      setNotice("Invitation sent by email.");
+      await openTeam(teamProject);
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function changeRole(member, role) {
+    try {
+      await updateProjectMemberRole(teamProject.id, member.user_id, role);
+      setMembers((current) => current.map((item) => item.user_id === member.user_id ? { ...item, role } : item));
+      setNotice(`${member.full_name} is now ${role.toLowerCase()}.`);
+    } catch (caught) {
+      setError(caught.message);
+    }
+  }
+
+  async function removeMember(member) {
+    if (!window.confirm(`Remove ${member.full_name} from ${teamProject.name}?`)) return;
+    try {
+      await removeProjectMember(teamProject.id, member.user_id);
+      setMembers((current) => current.filter((item) => item.user_id !== member.user_id));
+      setNotice(`${member.full_name} removed from the project.`);
+    } catch (caught) {
+      setError(caught.message);
+    }
+  }
+
+  async function transferOwnership(member) {
+    if (!window.confirm(`Transfer ownership of ${teamProject.name} to ${member.full_name}? Your role will become admin.`)) return;
+    try {
+      await transferProjectOwnership(teamProject.id, member.user_id);
+      setTeamProject(null);
+      setNotice(`Project ownership transferred to ${member.full_name}.`);
+      await load();
+      onProjectsChanged?.();
+    } catch (caught) {
+      setError(caught.message);
+    }
+  }
+
+  async function revokeInvite(invite) {
+    try {
+      await revokeProjectInvite(teamProject.id, invite.id);
+      setInvites((current) => current.filter((item) => item.id !== invite.id));
+      setNotice(`Invitation for ${invite.email} revoked.`);
+    } catch (caught) {
+      setError(caught.message);
+    }
+  }
+
+  const canEdit = teamProject
+    ? ["OWNER", "ADMIN", "MEMBER"].includes(teamProject.current_user_role)
+    : false;
+  const canManageTeam = teamProject
+    ? ["OWNER", "ADMIN"].includes(teamProject.current_user_role)
+    : false;
 
   return (
-    <div className="placeholder-page">
+    <div className="placeholder-page projects-page">
       <div className="page-heading-row">
-        <div><div className="page-breadcrumb"><span>Workspace</span><ChevronRight size={13} /><strong>Projects</strong></div><h1>Projects</h1><p className="page-description">Manage API contracts and their imported versions.</p></div>
-        <Button className="import-button" onClick={onImport}><FileUp size={15} /> Import API specification</Button>
+        <div><div className="page-breadcrumb"><span>Workspace</span><ChevronRight size={13} /><strong>Projects</strong></div><h1>Projects</h1><p className="page-description">Manage API contracts, project access, and activity.</p></div>
+        <div className="project-page-actions">
+          <Button variant="outline" onClick={onImport}><FileUp size={15} /> Import specification</Button>
+          <Button className="import-button" onClick={() => { setEditingProject(null); setProjectForm({ name: "", description: "" }); setShowCreate(true); }}>Create project</Button>
+        </div>
       </div>
+      {error && <div className="stage-error" role="alert">{error}</div>}
+      {notice && <div className="workspace-notice" role="status">{notice}</div>}
+      {showCreate && (
+        <section className="stage-panel project-edit-panel">
+          <div className="stage-toolbar"><div><strong>{editingProject ? "Edit project" : "Create project"}</strong><span>Project data is available only to its members.</span></div><Button variant="ghost" size="icon" aria-label="Close form" onClick={() => setShowCreate(false)}><X size={15} /></Button></div>
+          <form className="project-form" onSubmit={saveProject}>
+            <label>Project name<input required minLength={1} maxLength={255} value={projectForm.name} onChange={(event) => setProjectForm({ ...projectForm, name: event.target.value })} /></label>
+            <label>Description<textarea maxLength={4000} value={projectForm.description} onChange={(event) => setProjectForm({ ...projectForm, description: event.target.value })} rows={3} /></label>
+            <div className="project-form-actions"><Button type="submit" disabled={saving}>{saving ? "Saving…" : editingProject ? "Save changes" : "Create project"}</Button><Button type="button" variant="ghost" onClick={() => setShowCreate(false)}>Cancel</Button></div>
+          </form>
+        </section>
+      )}
       <section className="stage-panel">
-        <div className="stage-toolbar"><div><strong>All projects</strong><span>{projects.length} projects in this workspace</span></div><Button variant="ghost" size="sm" onClick={load}><RefreshCw size={13} /> Refresh</Button></div>
+        <div className="stage-toolbar projects-toolbar">
+          <div><strong>Your projects</strong><span>{filteredProjects.length} of {projects.length} projects</span></div>
+          <div className="projects-toolbar-actions"><label className="projects-search"><Search size={14} /><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search projects" /></label><label className="archived-filter"><input type="checkbox" checked={includeArchived} onChange={(event) => setIncludeArchived(event.target.checked)} /> Include archived</label><Button variant="ghost" size="sm" onClick={() => void load()}><RefreshCw size={13} /> Refresh</Button></div>
+        </div>
         {loading ? <div className="stage-state">Loading projects...</div> : error ? <div className="stage-error">{error}</div> : projects.length === 0 ? (
-          <div className="stage-empty"><Braces size={22} /><strong>No API projects yet</strong><span>Import an OpenAPI specification to create your first project.</span><Button variant="secondary" size="sm" onClick={onImport}>Import specification <ArrowRight size={14} /></Button></div>
+          <div className="stage-empty"><Braces size={22} /><strong>No projects yet</strong><span>Create a project to organize specifications, testing, and monitoring.</span><Button variant="secondary" size="sm" onClick={() => setShowCreate(true)}>Create a project <ArrowRight size={14} /></Button></div>
+        ) : filteredProjects.length === 0 ? (
+          <div className="stage-empty"><Search size={20} /><strong>No matching projects</strong><span>Adjust the search text or archived filter.</span></div>
         ) : (
-          <div className="table-scroll"><table className="data-table stage-table"><thead><tr><th>PROJECT</th><th>SPECIFICATIONS</th><th>LATEST VERSION</th><th>ENDPOINTS</th><th>UPDATED</th></tr></thead><tbody>
-            {projects.map((project) => <tr key={project.id} onClick={() => onOpenExplorer(project.id)}><td><strong>{project.name}</strong><small>{project.description || "No description"}</small></td><td>{project.specification_count}</td><td>{project.latest_version ? `v${project.latest_version}` : "-"}</td><td>{project.endpoint_count}</td><td>{new Date(project.updated_at).toLocaleString()}</td></tr>)}
+          <div className="table-scroll"><table className="data-table stage-table project-table"><thead><tr><th>PROJECT</th><th>SPECS</th><th>ENDPOINTS</th><th>ROLE</th><th>UPDATED</th><th>ACTIONS</th></tr></thead><tbody>
+            {filteredProjects.map((project) => <tr key={project.id}>
+              <td><strong>{project.name}</strong><small>{project.description || "No description"}</small>{project.is_archived && <span className="project-archived-badge">Archived</span>}</td>
+              <td>{project.specification_count}</td><td>{project.endpoint_count}</td><td><span className="role-badge">{project.current_user_role}</span></td><td>{new Date(project.updated_at).toLocaleDateString()}</td>
+              <td><div className="project-row-actions"><Button variant="ghost" size="sm" onClick={() => void openDashboard(project)}>Overview</Button><Button variant="ghost" size="icon" aria-label={`Open ${project.name} team`} onClick={() => void openTeam(project)}><Users size={14} /></Button><Button variant="ghost" size="icon" aria-label={`Edit ${project.name}`} disabled={!["OWNER", "ADMIN", "MEMBER"].includes(project.current_user_role) || project.is_archived} onClick={() => beginEdit(project)}><Pencil size={14} /></Button><Button variant="ghost" size="icon" aria-label={`Explore ${project.name} API`} disabled={project.is_archived} onClick={() => onOpenExplorer(project.id)}><Braces size={14} /></Button><Button variant="ghost" size="icon" aria-label={`${project.is_archived ? "Restore" : "Archive"} ${project.name}`} disabled={!["OWNER", "ADMIN"].includes(project.current_user_role)} onClick={() => void changeArchiveState(project)}>{project.is_archived ? <RefreshCw size={14} /> : <Archive size={14} />}</Button>{project.current_user_role === "OWNER" && <Button variant="ghost" size="icon" aria-label={`Delete ${project.name}`} onClick={() => void removeProject(project)}><Trash2 size={14} /></Button>}</div></td>
+            </tr>)}
           </tbody></table></div>
         )}
       </section>
+      {dashboard && (
+        <section className="stage-panel project-dashboard">
+          <div className="stage-toolbar"><div><strong>{dashboard.project.name}</strong><span>Project dashboard · actual persisted activity</span></div><div className="project-detail-actions"><Button variant="outline" size="sm" onClick={() => onOpenExplorer(dashboard.project.id)}>Explore API</Button><Button variant="ghost" size="icon" aria-label="Close project dashboard" onClick={() => setDashboard(null)}><X size={14} /></Button></div></div>
+          <div className="project-dashboard-metrics">
+            <Metric label="Specifications" value={dashboard.specification_count} />
+            <Metric label="Endpoints" value={dashboard.endpoint_count} />
+            <Metric label="Test runs" value={dashboard.test_run_count} />
+            <Metric label="Breaking changes" value={dashboard.breaking_changes_detected} tone="critical" />
+            <Metric label="Enabled monitors" value={dashboard.enabled_monitoring_configurations} />
+            <Metric label="Active alerts" value={dashboard.active_alert_count} tone="warning" />
+          </div>
+          <div className="project-dashboard-columns">
+            <section><h3>Recent test runs</h3>{dashboard.latest_test_runs.length ? <ul>{dashboard.latest_test_runs.map((run) => <li key={run.id}><span className={`run-status run-status-${run.status.toLowerCase()}`}>{run.status}</span><span>{run.passed_tests} passed · {run.failed_tests} failed</span><time>{new Date(run.started_at).toLocaleString()}</time></li>)}</ul> : <p>No test runs recorded.</p>}</section>
+            <section><h3>Recent project activity</h3>{dashboard.activity.length ? <ul>{dashboard.activity.map((item) => <li key={item.id}><span>{item.actor_name || "System"} · {item.action.replaceAll("_", " ")}</span><time>{new Date(item.created_at).toLocaleString()}</time></li>)}</ul> : <p>No project activity recorded.</p>}</section>
+          </div>
+        </section>
+      )}
+      {teamProject && (
+        <section className="stage-panel project-team-panel">
+          <div className="stage-toolbar"><div><strong>Team · {teamProject.name}</strong><span>Project role: {teamProject.current_user_role}</span></div><Button variant="ghost" size="icon" aria-label="Close team" onClick={() => setTeamProject(null)}><X size={14} /></Button></div>
+          {canManageTeam && <form className="project-invite-form" onSubmit={sendInvite}><label>Email<input type="email" required maxLength={320} value={inviteForm.email} onChange={(event) => setInviteForm({ ...inviteForm, email: event.target.value })} placeholder="teammate@company.com" /></label><label>Role<select value={inviteForm.role} onChange={(event) => setInviteForm({ ...inviteForm, role: event.target.value })}><option value="MEMBER">Member</option><option value="VIEWER">Viewer</option>{teamProject.current_user_role === "OWNER" && <option value="ADMIN">Admin</option>}</select></label><Button type="submit" disabled={saving}><UserPlus size={14} /> {saving ? "Sending…" : "Invite member"}</Button></form>}
+          <div className="table-scroll"><table className="data-table stage-table team-table"><thead><tr><th>MEMBER</th><th>ROLE</th><th>JOINED</th><th>ACTIONS</th></tr></thead><tbody>{members.map((member) => <tr key={member.user_id}><td><strong>{member.full_name}</strong><small>{member.email}</small></td><td>{member.role}</td><td>{new Date(member.joined_at).toLocaleDateString()}</td><td>{canManageTeam && member.role !== "OWNER" && <div className="project-row-actions"><select aria-label={`Role for ${member.full_name}`} value={member.role} onChange={(event) => void changeRole(member, event.target.value)}><option value="MEMBER">Member</option><option value="VIEWER">Viewer</option>{teamProject.current_user_role === "OWNER" && <option value="ADMIN">Admin</option>}</select>{teamProject.current_user_role === "OWNER" && <Button variant="ghost" size="icon" aria-label={`Transfer ownership to ${member.full_name}`} onClick={() => void transferOwnership(member)}><Crown size={14} /></Button>}<Button variant="ghost" size="icon" aria-label={`Remove ${member.full_name}`} onClick={() => void removeMember(member)}><Trash2 size={14} /></Button></div>}</td></tr>)}</tbody></table></div>
+          {canManageTeam && <div className="pending-invites"><h3>Pending invitations</h3>{invites.length ? invites.map((invite) => <div key={invite.id}><span>{invite.email} · {invite.role} · expires {new Date(invite.expires_at).toLocaleDateString()}</span><Button variant="ghost" size="sm" onClick={() => void revokeInvite(invite)}>Revoke</Button></div>) : <p>No pending invitations.</p>}</div>}
+          {!canEdit && <p className="project-readonly-note">Viewers have read-only access to this project.</p>}
+        </section>
+      )}
     </div>
   );
 }

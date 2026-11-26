@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Stage 6 — Authentication and Project Access
+
+- Added email-verified account registration, rotating refresh sessions, CSRF-protected session endpoints, password recovery, project roles, team invitations, and project lifecycle/activity APIs.
+- Enforced project membership across specification, testing, compatibility, monitoring, and WebSocket access; legacy projects require explicit operator ownership assignment.
+- Added PostgreSQL-backed Docker Compose deployment with an Nginx HTTPS proxy, production configuration checks, and operational/security documentation.
+
+### Stage 5 — Real-Time API Monitoring
+
+- Added persistent monitoring configurations/checks, read-only scheduled probes, bounded response validation, database leases, real metrics aggregation, and per-environment filtering.
+- Added Isolation Forest training/prediction with an explicit rule-based warm-up fallback, persistent deduplicated alerts, project-scoped authenticated REST/WebSocket access, and alert lifecycle actions.
+- Added monitoring, performance, error, anomaly, live, and alert dashboard pages plus setup and limitation documentation.
+
 ### Stage 4 — Breaking Change Detection
 
 - Added deterministic OpenAPI endpoint, parameter, request, response, content-type, enum, constraint, security, and local-reference comparison with compatibility classifications and indicative severity-weighted scores.
