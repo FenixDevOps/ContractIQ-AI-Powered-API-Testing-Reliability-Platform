@@ -54,6 +54,12 @@ class ApiSpecification(Base):
     endpoints: Mapped[list["ApiEndpoint"]] = relationship(
         back_populates="specification", cascade="all, delete-orphan"
     )
+    compatibility_comparisons_old: Mapped[list["CompatibilityComparison"]] = relationship(
+        foreign_keys="CompatibilityComparison.old_specification_id", cascade="all, delete-orphan"
+    )
+    compatibility_comparisons_new: Mapped[list["CompatibilityComparison"]] = relationship(
+        foreign_keys="CompatibilityComparison.new_specification_id", cascade="all, delete-orphan"
+    )
 
 
 class ApiEndpoint(Base):
@@ -137,3 +143,53 @@ class TestResult(Base):
     validation_errors: Mapped[list] = mapped_column(JSON_DOCUMENT, nullable=False, default=list)
     error_message: Mapped[str | None] = mapped_column(Text())
     executed_at: Mapped[datetime] = mapped_column(DateTime(), server_default=text("CURRENT_TIMESTAMP"))
+
+
+class CompatibilityComparison(Base):
+    __tablename__ = "compatibility_comparisons"
+
+    id: Mapped[uuid.UUID] = mapped_column(uuid_type(), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        uuid_type(), ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    old_specification_id: Mapped[uuid.UUID] = mapped_column(
+        uuid_type(), ForeignKey("api_specifications.id", ondelete="CASCADE"), index=True
+    )
+    new_specification_id: Mapped[uuid.UUID] = mapped_column(
+        uuid_type(), ForeignKey("api_specifications.id", ondelete="CASCADE"), index=True
+    )
+    compatibility_score: Mapped[int] = mapped_column(Integer, nullable=False)
+    overall_status: Mapped[str] = mapped_column(String(30), nullable=False)
+    total_changes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    breaking_changes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    non_breaking_changes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    potentially_breaking_changes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    informational_changes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    comparison_metadata: Mapped[dict] = mapped_column(JSON_DOCUMENT, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(server_default=text("CURRENT_TIMESTAMP"))
+    changes: Mapped[list["CompatibilityChange"]] = relationship(
+        back_populates="comparison", cascade="all, delete-orphan", order_by="CompatibilityChange.created_at"
+    )
+
+
+class CompatibilityChange(Base):
+    __tablename__ = "compatibility_changes"
+
+    id: Mapped[uuid.UUID] = mapped_column(uuid_type(), primary_key=True, default=uuid.uuid4)
+    comparison_id: Mapped[uuid.UUID] = mapped_column(
+        uuid_type(), ForeignKey("compatibility_comparisons.id", ondelete="CASCADE"), index=True
+    )
+    category: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    change_type: Mapped[str] = mapped_column(String(60), nullable=False)
+    severity: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    compatibility: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    path: Mapped[str | None] = mapped_column(String(2048), index=True)
+    method: Mapped[str | None] = mapped_column(String(10))
+    property_name: Mapped[str | None] = mapped_column(String(512))
+    old_value: Mapped[dict | list | str | int | float | bool | None] = mapped_column(JSON_DOCUMENT)
+    new_value: Mapped[dict | list | str | int | float | bool | None] = mapped_column(JSON_DOCUMENT)
+    explanation: Mapped[str] = mapped_column(Text(), nullable=False)
+    recommendation: Mapped[str] = mapped_column(Text(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(server_default=text("CURRENT_TIMESTAMP"))
+
+    comparison: Mapped["CompatibilityComparison"] = relationship(back_populates="changes")

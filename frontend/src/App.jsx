@@ -239,7 +239,7 @@ export default function App() {
           )}
         </div>
         <footer className="main-footer">
-          <span>ContractIQ <i /> Stage 3 automated testing</span>
+          <span>ContractIQ <i /> Stage 4 compatibility analysis</span>
           <span>Local development environment</span>
         </footer>
       </main>

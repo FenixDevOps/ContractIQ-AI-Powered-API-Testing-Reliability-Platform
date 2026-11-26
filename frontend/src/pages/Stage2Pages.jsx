@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowRight, Braces, ChevronRight, Download, FileUp, GitCompareArrows, RefreshCw, Search } from "lucide-react";
+import { ArrowRight, Braces, ChevronLeft, ChevronRight, Download, FileUp, GitCompareArrows, Printer, RefreshCw, Search, ShieldAlert, Trash2 } from "lucide-react";
 import { Button } from "../components/ui/button.jsx";
 import {
   compareSpecifications,
+  deleteCompatibilityComparison,
+  downloadCompatibilityJSON,
+  getCompatibilityChanges,
+  getCompatibilityHistory,
+  getCompatibilitySummary,
   getProjectSpecifications,
   getProjects,
   getSpecificationEndpoints,
-  getSpecificationVersions,
   importSpecification,
 } from "../services/api.js";
 
@@ -20,6 +24,15 @@ export function ProjectsPage({ onImport, onOpenExplorer }) {
     setError("");
     try { setProjects(await getProjects()); }
     catch (caught) { setError(caught.message); }
+    finally { setLoading(false); }
+  }
+
+  async function changeHistoryPage(page) {
+    try {
+      setLoading(true);
+      setHistory(await getCompatibilityHistory(projectId, page, 20));
+      setHistoryPage(page);
+    } catch (caught) { setError(caught.message); }
     finally { setLoading(false); }
   }
 
@@ -115,27 +128,229 @@ export function ChangesPage() {
   const [versions, setVersions] = useState([]);
   const [beforeId, setBeforeId] = useState("");
   const [afterId, setAfterId] = useState("");
+  const [history, setHistory] = useState({ items: [], total: 0, summary: {} });
+  const [historyPage, setHistoryPage] = useState(1);
   const [report, setReport] = useState(null);
+  const [changes, setChanges] = useState([]);
+  const [changeTotal, setChangeTotal] = useState(0);
+  const [changePage, setChangePage] = useState(1);
+  const [filters, setFilters] = useState({ severity: "", category: "", path: "" });
+  const [loading, setLoading] = useState(false);
+  const [comparing, setComparing] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState("");
 
-  useEffect(() => { getProjects().then((items) => { setProjects(items); if (items[0]) setProjectId(items[0].id); }).catch((caught) => setError(caught.message)); }, []);
   useEffect(() => {
-    if (!projectId) return;
-    getProjectSpecifications(projectId).then((items) => { setVersions(items); setBeforeId(items[1]?.id || ""); setAfterId(items[0]?.id || ""); }).catch((caught) => setError(caught.message));
+    getProjects().then((items) => {
+      setProjects(items);
+      if (items[0]) setProjectId(items[0].id);
+    }).catch((caught) => setError(caught.message));
+  }, []);
+
+  useEffect(() => {
+    if (!projectId) {
+      setVersions([]);
+      setHistory({ items: [], total: 0, summary: {} });
+      setHistoryPage(1);
+      setReport(null);
+      return;
+    }
+    let active = true;
+    setLoading(true);
+    setHistory({ items: [], total: 0, summary: {} });
+    setHistoryPage(1);
+    setReport(null);
+    setFilters({ severity: "", category: "", path: "" });
+    Promise.all([getProjectSpecifications(projectId), getCompatibilityHistory(projectId, 1, 20)])
+      .then(([specs, comparisons]) => {
+        if (!active) return;
+        setVersions(specs);
+        setBeforeId(specs[1]?.id || "");
+        setAfterId(specs[0]?.id || "");
+        setHistory(comparisons);
+        setReport(null);
+        setChanges([]);
+      })
+      .catch((caught) => { if (active) setError(caught.message); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, [projectId]);
 
+  async function loadChanges(comparisonId, nextFilters = filters, page = 1) {
+    const result = await getCompatibilityChanges(comparisonId, { ...nextFilters, page, page_size: 100 });
+    setChanges(result.items);
+    setChangeTotal(result.total);
+    setChangePage(page);
+  }
+
+  async function openReport(comparisonOrId) {
+    setLoading(true);
+    setError("");
+    try {
+      const details = await getCompatibilitySummary(
+        typeof comparisonOrId === "string" ? comparisonOrId : comparisonOrId.id
+      );
+      setReport(details);
+      await loadChanges(details.id);
+    } catch (caught) { setError(caught.message); }
+    finally { setLoading(false); }
+  }
+
   async function runComparison() {
-    if (!beforeId || !afterId) return;
-    try { setReport(await compareSpecifications(beforeId, afterId)); setError(""); } catch (caught) { setError(caught.message); }
+    if (!beforeId || !afterId || beforeId === afterId) return;
+    setComparing(true);
+    setError("");
+    try {
+      const comparison = await compareSpecifications(beforeId, afterId);
+      await openReport(comparison.id);
+      setHistoryPage(1);
+      const refreshed = await getCompatibilityHistory(projectId, 1, 20);
+      setHistory(refreshed);
+    } catch (caught) { setError(caught.message); }
+    finally { setComparing(false); }
+  }
+
+  async function applyFilter(key, value) {
+    const next = { ...filters, [key]: value };
+    setFilters(next);
+    if (report) {
+      try { await loadChanges(report.id, next); }
+      catch (caught) { setError(caught.message); }
+    }
+  }
+
+  async function exportReport() {
+    if (!report) return;
+    setExporting(true);
+    setError("");
+    try { await downloadCompatibilityJSON(report.id); }
+    catch (caught) { setError(caught.message); }
+    finally { setExporting(false); }
+  }
+
+  async function removeComparison(comparisonId) {
+    try {
+      await deleteCompatibilityComparison(comparisonId);
+      setHistory(await getCompatibilityHistory(projectId, historyPage, 20));
+      if (report?.id === comparisonId) {
+        setReport(null);
+        setChanges([]);
+      }
+    } catch (caught) { setError(caught.message); }
   }
 
   return (
-    <div className="placeholder-page"><div className="page-heading-row"><div><div className="page-breadcrumb"><span>Workspace</span><ChevronRight size={13} /><strong>Contract Changes</strong></div><h1>Contract Changes</h1><p className="page-description">Compare imported specification versions structurally.</p></div></div>
-      {error && <div className="stage-error">{error}</div>}
-      <section className="stage-panel compare-controls"><label>Project<select value={projectId} onChange={(event) => setProjectId(event.target.value)}>{projects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><label>Before<select value={beforeId} onChange={(event) => setBeforeId(event.target.value)}>{versions.map((item) => <option key={item.id} value={item.id}>v{item.version_number} · {item.original_filename}</option>)}</select></label><label>After<select value={afterId} onChange={(event) => setAfterId(event.target.value)}>{versions.map((item) => <option key={item.id} value={item.id}>v{item.version_number} · {item.original_filename}</option>)}</select></label><Button onClick={runComparison} disabled={!beforeId || !afterId}><GitCompareArrows size={14} /> Compare</Button></section>
-      {!report ? <div className="stage-empty"><GitCompareArrows size={22} /><strong>No comparison selected</strong><span>Choose two specification versions to see structural changes.</span></div> : (
-        <div className="stage-panel comparison-report"><div className="stage-toolbar"><div><strong>Comparison report</strong><span>{report.change_count} changes detected</span></div></div><div className="comparison-list">{report.changes.length === 0 ? <div className="stage-state">No structural changes detected.</div> : report.changes.map((change, index) => <article className={`change-item ${change.potentially_breaking ? "breaking" : ""}`} key={index}><div><strong>{change.key || change.kind}</strong><span>{change.classification}</span></div>{change.modifications && <pre>{JSON.stringify(change.modifications, null, 2)}</pre>}</article>)}</div><p className="limitations">{report.limitations.join(" ")}</p></div>
+    <div className="placeholder-page compatibility-page">
+      <div className="page-heading-row">
+        <div><div className="page-breadcrumb"><span>Workspace</span><ChevronRight size={13} /><strong>Breaking Changes</strong></div><h1>Breaking change detection</h1><p className="page-description">Compare imported OpenAPI versions and review deterministic compatibility findings.</p></div>
+      </div>
+      {error && <div className="stage-error" role="alert">{error}</div>}
+
+      <section className="compatibility-metrics" aria-label="Compatibility overview">
+        <Metric label="Comparisons" value={history.summary?.comparisons || 0} />
+        <Metric label="Breaking changes" value={history.summary?.breaking_changes || 0} tone="critical" />
+        <Metric label="Potential risks" value={history.summary?.potentially_breaking_changes || 0} tone="warning" />
+        <Metric label="Non-breaking changes" value={history.summary?.non_breaking_changes || 0} tone="safe" />
+        <Metric label="Average score" value={`${history.summary?.average_compatibility_score ?? 0}`} suffix="/ 100" />
+      </section>
+
+      <section className="stage-panel compatibility-compare">
+        <div className="stage-toolbar"><div><strong>Compare versions</strong><span>Select two different specifications in the same project.</span></div></div>
+        <div className="compare-controls">
+          <label>Project<select value={projectId} onChange={(event) => setProjectId(event.target.value)}><option value="">Select project</option>{projects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+          <label>Previous specification<select value={beforeId} onChange={(event) => setBeforeId(event.target.value)}><option value="">Select previous version</option>{versions.map((item) => <option key={item.id} value={item.id}>v{item.version_number} · {item.api_version} · {item.title}</option>)}</select></label>
+          <label>New specification<select value={afterId} onChange={(event) => setAfterId(event.target.value)}><option value="">Select new version</option>{versions.map((item) => <option key={item.id} value={item.id}>v{item.version_number} · {item.api_version} · {item.title}</option>)}</select></label>
+          <Button onClick={runComparison} disabled={comparing || !beforeId || !afterId || beforeId === afterId}>
+            {comparing ? <RefreshCw className="spin-icon" size={14} /> : <GitCompareArrows size={14} />}
+            {comparing ? "Comparing..." : "Compare versions"}
+          </Button>
+        </div>
+        {beforeId && beforeId === afterId && <p className="comparison-warning">Choose two different specifications to continue.</p>}
+      </section>
+
+      {report && (
+        <section className="stage-panel comparison-report">
+          <div className="stage-toolbar report-heading">
+            <div><strong>Compatibility report</strong><span>{report.comparison_metadata?.api_name} · v{report.comparison_metadata?.old_version_number} → v{report.comparison_metadata?.new_version_number}</span></div>
+            <div className="report-actions">
+              <span className={`compat-status status-${report.overall_status.toLowerCase().replaceAll("_", "-")}`}>{report.overall_status.replaceAll("_", " ")}</span>
+              <Button variant="outline" size="sm" onClick={exportReport} disabled={exporting}><Download size={13} /> {exporting ? "Exporting..." : "JSON report"}</Button>
+              <Button variant="outline" size="sm" onClick={() => window.print()}><Printer size={13} /> Print</Button>
+            </div>
+          </div>
+          <div className="report-score-row">
+            <div className="compat-score"><strong>{report.compatibility_score}</strong><span>/ 100</span></div>
+            <span className="score-disclaimer">{report.comparison_metadata?.score_note}</span>
+            <span className="report-count">{report.total_changes} detected changes</span>
+          </div>
+          <div className="endpoint-summary">
+            {Object.entries(report.comparison_metadata?.endpoint_summary || {}).map(([label, value]) => (
+              <div key={label}><strong>{value}</strong><span>{label.replaceAll("_", " ")}</span></div>
+            ))}
+          </div>
+          <div className="testing-filters compatibility-filters">
+            <label>Severity<select value={filters.severity} onChange={(event) => applyFilter("severity", event.target.value)}><option value="">All severities</option>{["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"].map((item) => <option key={item}>{item}</option>)}</select></label>
+            <label>Category<select value={filters.category} onChange={(event) => applyFilter("category", event.target.value)}><option value="">All categories</option>{["ENDPOINT", "PARAMETER", "REQUEST_BODY", "RESPONSE", "RESPONSE_SCHEMA", "SECURITY", "CONTENT_TYPE"].map((item) => <option key={item}>{item}</option>)}</select></label>
+            <label className="compat-path-filter">Endpoint<input value={filters.path} onChange={(event) => applyFilter("path", event.target.value)} placeholder="Filter by path" /></label>
+            <span className="compat-filter-count">{changeTotal} findings</span>
+          </div>
+          {loading ? <div className="stage-state">Loading comparison...</div> : changes.length === 0 ? (
+            <div className="stage-empty"><ShieldAlert size={20} /><strong>No changes match these filters</strong><span>Try changing a filter, or compare versions with different contracts.</span></div>
+          ) : <div className="compatibility-changes">
+            {changes.map((change) => <article className="compat-change" key={change.id}>
+              <div className="compat-change-heading">
+                <span className={`severity-badge severity-${change.severity.toLowerCase()}`}>{change.severity}</span>
+                <span className="compat-category">{change.category.replaceAll("_", " ")}</span>
+                {change.method && <span className={`method method-${change.method.toLowerCase()}`}>{change.method}</span>}
+                {change.path && <code>{change.path}</code>}
+                <strong>{change.change_type.replaceAll("_", " ")}</strong>
+                <span className={`classification classification-${change.compatibility.toLowerCase().replaceAll("_", "-")}`}>{change.compatibility.replaceAll("_", " ")}</span>
+              </div>
+              {change.property_name && <div className="compat-property">Property: <code>{change.property_name}</code></div>}
+              <p>{change.explanation}</p>
+              <div className="compat-values">
+                <div><span>Previous</span><pre>{formatValue(change.old_value)}</pre></div>
+                <div><span>New</span><pre>{formatValue(change.new_value)}</pre></div>
+              </div>
+              <div className="compat-recommendation"><strong>Recommended action</strong><span>{change.recommendation}</span></div>
+            </article>)}
+          </div>}
+          {changeTotal > 100 && <div className="compat-pagination">
+            <Button variant="outline" size="sm" disabled={changePage <= 1} onClick={() => loadChanges(report.id, filters, changePage - 1)}><ChevronLeft size={13} /> Previous</Button>
+            <span>Page {changePage} of {Math.ceil(changeTotal / 100)}</span>
+            <Button variant="outline" size="sm" disabled={changePage * 100 >= changeTotal} onClick={() => loadChanges(report.id, filters, changePage + 1)}>Next <ChevronRight size={13} /></Button>
+          </div>}
+          {report.comparison_metadata?.limitations?.map((limitation) => <p className="limitations" key={limitation}>{limitation}</p>)}
+        </section>
       )}
+
+      <section className="stage-panel compatibility-history">
+        <div className="stage-toolbar"><div><strong>Comparison history</strong><span>{history.total || 0} saved comparisons</span></div><Button variant="ghost" size="sm" onClick={() => projectId && getCompatibilityHistory(projectId, historyPage, 20).then(setHistory).catch((caught) => setError(caught.message))}><RefreshCw size={13} /> Refresh</Button></div>
+        {loading && !report ? <div className="stage-state">Loading comparison history...</div> : history.items?.length ? (
+          <div className="table-scroll"><table className="data-table stage-table compatibility-table"><thead><tr><th>VERSIONS</th><th>STATUS</th><th>SCORE</th><th>BREAKING</th><th>DATE</th><th>ACTIONS</th></tr></thead><tbody>
+            {history.items.map((item) => <tr key={item.id}>
+              <td><strong>v{item.comparison_metadata?.old_version_number} → v{item.comparison_metadata?.new_version_number}</strong><small>{item.comparison_metadata?.api_name}</small></td>
+              <td><span className={`compat-status status-${item.overall_status.toLowerCase().replaceAll("_", "-")}`}>{item.overall_status.replaceAll("_", " ")}</span></td>
+              <td>{item.compatibility_score}/100</td><td>{item.breaking_changes}</td><td>{new Date(item.created_at).toLocaleString()}</td>
+              <td><div className="history-actions"><Button variant="outline" size="sm" onClick={() => openReport(item.id)}>View report</Button><Button variant="ghost" size="icon" aria-label="Delete comparison" onClick={() => removeComparison(item.id)}><Trash2 size={13} /></Button></div></td>
+            </tr>)}
+          </tbody></table></div>
+        ) : <div className="stage-empty"><GitCompareArrows size={20} /><strong>No comparisons saved</strong><span>Compare two versions to create your first compatibility report.</span></div>}
+        {history.total > 20 && <div className="compat-pagination">
+          <Button variant="outline" size="sm" disabled={historyPage <= 1} onClick={() => changeHistoryPage(historyPage - 1)}><ChevronLeft size={13} /> Previous</Button>
+          <span>Page {historyPage} of {Math.ceil(history.total / 20)}</span>
+          <Button variant="outline" size="sm" disabled={historyPage * 20 >= history.total} onClick={() => changeHistoryPage(historyPage + 1)}>Next <ChevronRight size={13} /></Button>
+        </div>}
+      </section>
     </div>
   );
+}
+
+function Metric({ label, value, suffix = "", tone = "" }) {
+  return <div className={`metric-panel compatibility-metric ${tone}`}><span>{label}</span><strong>{value}{suffix && <small>{suffix}</small>}</strong></div>;
+}
+
+function formatValue(value) {
+  if (value === null || value === undefined) return "Not present";
+  return typeof value === "string" ? value : JSON.stringify(value, null, 2);
 }

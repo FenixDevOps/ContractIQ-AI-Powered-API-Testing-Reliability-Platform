@@ -21,7 +21,7 @@ export const navigation = [
   { id: "projects", label: "Projects", icon: Blocks, group: "workspace" },
   { id: "explorer", label: "API Explorer", icon: Braces, group: "workspace" },
   { id: "testRuns", label: "Test Runs", icon: FlaskConical, group: "quality" },
-  { id: "changes", label: "Contract Changes", icon: ShieldAlert, group: "quality" },
+  { id: "changes", label: "Breaking Changes", icon: ShieldAlert, group: "quality" },
   { id: "performance", label: "Performance", icon: ChartNoAxesCombined, group: "quality" },
   { id: "insights", label: "AI Insights", icon: Sparkles, group: "intelligence" },
   { id: "alerts", label: "Alerts", icon: BellRing, group: "intelligence" },
@@ -85,7 +85,7 @@ export default function Sidebar({ activeSection, onNavigate, isOpen, onClose, co
           <a className="help-link" href={API_DOCS_URL} target="_blank" rel="noreferrer">
             <CircleHelp size={15} /> API documentation <span>↗</span>
           </a>
-          <div className="sidebar-version"><span>CONTRACTIQ</span><span>STAGE 3</span></div>
+          <div className="sidebar-version"><span>CONTRACTIQ</span><span>STAGE 4</span></div>
         </div>
       </aside>
     </>

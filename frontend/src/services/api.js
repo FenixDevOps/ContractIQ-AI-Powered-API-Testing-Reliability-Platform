@@ -81,7 +81,63 @@ export function getRawSpecification(specificationId) {
 }
 
 export function compareSpecifications(specificationId, otherSpecificationId) {
-  return request(`/api/v1/specifications/${specificationId}/compare/${otherSpecificationId}`);
+  return request("/api/v1/compatibility/compare", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      old_specification_id: specificationId,
+      new_specification_id: otherSpecificationId,
+    }),
+  });
+}
+
+export function getCompatibilityHistory(projectId, page = 1, pageSize = 20) {
+  const query = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+  return request(`/api/v1/projects/${projectId}/compatibility?${query}`);
+}
+
+export function getCompatibilityDetails(comparisonId) {
+  return request(`/api/v1/compatibility/${comparisonId}`);
+}
+
+export function getCompatibilityChanges(comparisonId, filters = {}) {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== null && value !== "") query.set(key, value);
+  }
+  return request(`/api/v1/compatibility/${comparisonId}/changes?${query}`);
+}
+
+export function getCompatibilitySummary(comparisonId) {
+  return request(`/api/v1/compatibility/${comparisonId}/summary`);
+}
+
+export async function downloadCompatibilityJSON(comparisonId) {
+  let response;
+  try {
+    response = await fetch(`${API_BASE_URL}/api/v1/compatibility/${comparisonId}/report/json`, {
+      headers: { Accept: "application/json" },
+    });
+  } catch {
+    throw new Error("Unable to reach the ContractIQ backend.");
+  }
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.detail || `Backend returned HTTP ${response.status}`);
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `contractiq-compatibility-${comparisonId}.json`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+export function deleteCompatibilityComparison(comparisonId) {
+  return request(`/api/v1/compatibility/${comparisonId}`, { method: "DELETE" });
 }
 
 export function generateTestCases(specificationId) {
