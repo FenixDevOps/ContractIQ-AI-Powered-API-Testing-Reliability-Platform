@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy import Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -28,6 +28,9 @@ class Project(Base):
     updated_at: Mapped[datetime] = mapped_column(server_default=text("CURRENT_TIMESTAMP"), onupdate=text("CURRENT_TIMESTAMP"))
 
     specifications: Mapped[list["ApiSpecification"]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    monitoring_configurations: Mapped[list["MonitoringConfiguration"]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
 
@@ -59,6 +62,9 @@ class ApiSpecification(Base):
     )
     compatibility_comparisons_new: Mapped[list["CompatibilityComparison"]] = relationship(
         foreign_keys="CompatibilityComparison.new_specification_id", cascade="all, delete-orphan"
+    )
+    monitoring_configurations: Mapped[list["MonitoringConfiguration"]] = relationship(
+        back_populates="specification", cascade="all, delete-orphan"
     )
 
 
@@ -193,3 +199,137 @@ class CompatibilityChange(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=text("CURRENT_TIMESTAMP"))
 
     comparison: Mapped["CompatibilityComparison"] = relationship(back_populates="changes")
+
+
+class MonitoringConfiguration(Base):
+    __tablename__ = "monitoring_configs"
+    __table_args__ = (
+        UniqueConstraint("configuration_key", name="uq_monitoring_configuration_key"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(uuid_type(), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        uuid_type(), ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    specification_id: Mapped[uuid.UUID] = mapped_column(
+        uuid_type(), ForeignKey("api_specifications.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    environment_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    base_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    endpoint_ids: Mapped[list] = mapped_column(JSON_DOCUMENT, nullable=False)
+    configuration_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    timeout_seconds: Mapped[float] = mapped_column(Float(), nullable=False)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime())
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime())
+    next_check_at: Mapped[datetime | None] = mapped_column(DateTime(), index=True)
+    lease_owner: Mapped[str | None] = mapped_column(String(64))
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(), index=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=text("CURRENT_TIMESTAMP"))
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=text("CURRENT_TIMESTAMP"), onupdate=text("CURRENT_TIMESTAMP")
+    )
+
+    project: Mapped["Project"] = relationship(back_populates="monitoring_configurations")
+    specification: Mapped["ApiSpecification"] = relationship(back_populates="monitoring_configurations")
+    checks: Mapped[list["MonitoringCheck"]] = relationship(
+        back_populates="configuration", cascade="all, delete-orphan"
+    )
+
+
+class MonitoringCheck(Base):
+    __tablename__ = "monitoring_checks"
+    __table_args__ = (
+        Index("ix_monitoring_checks_project_checked_at", "project_id", "checked_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(uuid_type(), primary_key=True, default=uuid.uuid4)
+    monitoring_config_id: Mapped[uuid.UUID] = mapped_column(
+        uuid_type(), ForeignKey("monitoring_configs.id", ondelete="CASCADE"), index=True
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        uuid_type(), ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    endpoint: Mapped[str] = mapped_column(String(2048), nullable=False, index=True)
+    method: Mapped[str] = mapped_column(String(10), nullable=False)
+    status_code: Mapped[int | None] = mapped_column(Integer())
+    latency_ms: Mapped[float | None] = mapped_column(Float())
+    success: Mapped[bool] = mapped_column(Boolean, nullable=False, index=True)
+    error_category: Mapped[str | None] = mapped_column(String(30), index=True)
+    error_message: Mapped[str | None] = mapped_column(String(500))
+    checked_at: Mapped[datetime] = mapped_column(DateTime(), server_default=text("CURRENT_TIMESTAMP"), index=True)
+
+    configuration: Mapped["MonitoringConfiguration"] = relationship(back_populates="checks")
+
+
+class AnomalyModel(Base):
+    __tablename__ = "anomaly_models"
+    __table_args__ = (UniqueConstraint("project_id", name="uq_anomaly_model_project_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(uuid_type(), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        uuid_type(), ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    model_version: Mapped[str] = mapped_column(String(40), nullable=False)
+    model_parameters: Mapped[dict] = mapped_column(JSON_DOCUMENT, nullable=False)
+    training_samples: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    model_status: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    trained_at: Mapped[datetime | None] = mapped_column(DateTime())
+    training_data_end_at: Mapped[datetime | None] = mapped_column(DateTime())
+    created_at: Mapped[datetime] = mapped_column(server_default=text("CURRENT_TIMESTAMP"))
+
+
+class AnomalyDetection(Base):
+    __tablename__ = "anomaly_detections"
+
+    id: Mapped[uuid.UUID] = mapped_column(uuid_type(), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        uuid_type(), ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    monitoring_config_id: Mapped[uuid.UUID | None] = mapped_column(
+        uuid_type(), ForeignKey("monitoring_configs.id", ondelete="SET NULL"), index=True
+    )
+    endpoint: Mapped[str] = mapped_column(String(2048), nullable=False, index=True)
+    method: Mapped[str] = mapped_column(String(10), nullable=False)
+    anomaly_score: Mapped[float] = mapped_column(Float(), nullable=False)
+    detection_method: Mapped[str] = mapped_column(String(30), nullable=False)
+    severity: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    anomaly_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    metrics: Mapped[dict] = mapped_column(JSON_DOCUMENT, nullable=False)
+    explanation: Mapped[str] = mapped_column(Text(), nullable=False)
+    recommendation: Mapped[str] = mapped_column(Text(), nullable=False)
+    detected_at: Mapped[datetime] = mapped_column(DateTime(), server_default=text("CURRENT_TIMESTAMP"), index=True)
+    acknowledged: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+
+
+class MonitoringAlert(Base):
+    __tablename__ = "monitoring_alerts"
+    __table_args__ = (
+        UniqueConstraint("deduplication_key", name="uq_monitoring_alert_deduplication_key"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(uuid_type(), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        uuid_type(), ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    anomaly_id: Mapped[uuid.UUID | None] = mapped_column(
+        uuid_type(), ForeignKey("anomaly_detections.id", ondelete="SET NULL"), index=True
+    )
+    monitoring_config_id: Mapped[uuid.UUID | None] = mapped_column(
+        uuid_type(), ForeignKey("monitoring_configs.id", ondelete="SET NULL"), index=True
+    )
+    endpoint: Mapped[str | None] = mapped_column(String(2048), index=True)
+    alert_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    severity: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    message: Mapped[str] = mapped_column(Text(), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="OPEN", index=True)
+    deduplication_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    metrics: Mapped[dict] = mapped_column(JSON_DOCUMENT, nullable=False, default=dict)
+    recommendation: Mapped[str] = mapped_column(Text(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(), server_default=text("CURRENT_TIMESTAMP"), index=True)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime())
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime())
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime())

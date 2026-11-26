@@ -5,6 +5,7 @@ if (!configuredBaseUrl) {
 }
 
 const API_BASE_URL = configuredBaseUrl.replace(/\/$/, "");
+const MONITORING_TOKEN_KEY = "contractiqMonitoringToken";
 export const API_DOCS_URL = `${API_BASE_URL}/docs`;
 
 export async function fetchHealth() {
@@ -198,4 +199,127 @@ export function getTestResultDetails(resultId) {
 
 export function getTestingSummary(specificationId) {
   return request(`/api/v1/specifications/${specificationId}/testing-summary`);
+}
+
+function monitoringRequest(path, options = {}) {
+  const headers = new Headers(options.headers || {});
+  const token = getMonitoringAuthToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  headers.set("Accept", "application/json");
+  return request(path, { ...options, headers });
+}
+
+export function getMonitoringAuthToken() {
+  return typeof window === "undefined" ? "" : window.sessionStorage.getItem(MONITORING_TOKEN_KEY) || "";
+}
+
+export function setMonitoringAuthToken(token) {
+  if (typeof window !== "undefined") window.sessionStorage.setItem(MONITORING_TOKEN_KEY, token.trim());
+}
+
+export function clearMonitoringAuthToken() {
+  if (typeof window !== "undefined") window.sessionStorage.removeItem(MONITORING_TOKEN_KEY);
+}
+
+function queryString(values) {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(values)) {
+    if (value !== undefined && value !== null && value !== "") query.set(key, String(value));
+  }
+  return query.toString();
+}
+
+export function getMonitoringConfigurations(projectId) {
+  return monitoringRequest(`/api/v1/projects/${projectId}/monitoring/configurations`);
+}
+
+export function createMonitoringConfiguration(projectId, payload) {
+  return monitoringRequest(`/api/v1/projects/${projectId}/monitoring/configurations`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateMonitoringConfiguration(projectId, configurationId, payload) {
+  return monitoringRequest(`/api/v1/projects/${projectId}/monitoring/configurations/${configurationId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function startMonitoringConfiguration(projectId, configurationId) {
+  return monitoringRequest(`/api/v1/projects/${projectId}/monitoring/configurations/${configurationId}/start`, {
+    method: "POST",
+  });
+}
+
+export function pauseMonitoringConfiguration(projectId, configurationId) {
+  return monitoringRequest(`/api/v1/projects/${projectId}/monitoring/configurations/${configurationId}/pause`, {
+    method: "POST",
+  });
+}
+
+export function deleteMonitoringConfiguration(projectId, configurationId) {
+  return monitoringRequest(`/api/v1/projects/${projectId}/monitoring/configurations/${configurationId}`, {
+    method: "DELETE",
+  });
+}
+
+export function getMonitoringOverview(projectId, window = "1h", environmentName = "") {
+  return monitoringRequest(`/api/v1/projects/${projectId}/monitoring/overview?${queryString({ window, environment_name: environmentName })}`);
+}
+
+export function getMonitoringMetrics(projectId, window = "1h", endpoint = "", environmentName = "") {
+  return monitoringRequest(`/api/v1/projects/${projectId}/monitoring/metrics?${queryString({ window, endpoint, environment_name: environmentName })}`);
+}
+
+export function getMonitoringChecks(projectId, filters = {}) {
+  return monitoringRequest(`/api/v1/projects/${projectId}/monitoring/checks?${queryString(filters)}`);
+}
+
+export function getMonitoringErrors(projectId, filters = {}) {
+  return monitoringRequest(`/api/v1/projects/${projectId}/monitoring/errors?${queryString(filters)}`);
+}
+
+export function getMonitoringAnomalies(projectId, filters = {}) {
+  return monitoringRequest(`/api/v1/projects/${projectId}/monitoring/anomalies?${queryString(filters)}`);
+}
+
+export function getAnomalyModelStatus(projectId) {
+  return monitoringRequest(`/api/v1/projects/${projectId}/monitoring/anomalies/model`);
+}
+
+export function trainAnomalyModel(projectId) {
+  return monitoringRequest(`/api/v1/projects/${projectId}/monitoring/anomalies/train`, { method: "POST" });
+}
+
+export function acknowledgeAnomaly(projectId, anomalyId) {
+  return monitoringRequest(`/api/v1/projects/${projectId}/monitoring/anomalies/${anomalyId}/acknowledge`, {
+    method: "PATCH",
+  });
+}
+
+export function getMonitoringAlerts(projectId, filters = {}) {
+  return monitoringRequest(`/api/v1/projects/${projectId}/monitoring/alerts?${queryString(filters)}`);
+}
+
+export function updateMonitoringAlert(projectId, alertId, action) {
+  return monitoringRequest(`/api/v1/projects/${projectId}/monitoring/alerts/${alertId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action }),
+  });
+}
+
+export function createMonitoringSocket(projectId) {
+  const token = getMonitoringAuthToken();
+  if (!token) throw new Error("Enter the monitoring access token to connect to the live stream.");
+  const url = new URL(`${API_BASE_URL}/ws/v1/projects/${projectId}/monitoring/live`);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  return new WebSocket(url, [
+    "contractiq.monitoring.v1",
+    `bearer.${token}`,
+  ]);
 }

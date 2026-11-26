@@ -19,6 +19,7 @@ import PlaceholderPage from "./pages/PlaceholderPage.jsx";
 import ImportDialog from "./components/ImportDialog.jsx";
 import { ChangesPage, ExplorerPage, ProjectsPage } from "./pages/Stage2Pages.jsx";
 import TestingPage from "./pages/TestingPage.jsx";
+import MonitoringPage from "./pages/MonitoringPage.jsx";
 import { API_DOCS_URL, fetchHealth, getProjects } from "./services/api.js";
 
 export default function App() {
@@ -234,12 +235,14 @@ export default function App() {
             <ChangesPage />
           ) : activeSection === "testRuns" ? (
             <TestingPage />
+          ) : ["monitoring", "performance", "errors", "insights", "live", "alerts"].includes(activeSection) ? (
+            <MonitoringPage section={activeSection} projectId={selectedProjectId} />
           ) : (
             <PlaceholderPage section={activeSection} onImport={() => setOverlay("import")} />
           )}
         </div>
         <footer className="main-footer">
-          <span>ContractIQ <i /> Stage 4 compatibility analysis</span>
+          <span>ContractIQ <i /> Stage 5 real-time monitoring</span>
           <span>Local development environment</span>
         </footer>
       </main>

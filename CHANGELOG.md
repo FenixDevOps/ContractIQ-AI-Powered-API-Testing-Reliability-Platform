@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Stage 5 — Real-Time API Monitoring
+
+- Added persistent monitoring configurations/checks, read-only scheduled probes, bounded response validation, database leases, real metrics aggregation, and per-environment filtering.
+- Added Isolation Forest training/prediction with an explicit rule-based warm-up fallback, persistent deduplicated alerts, project-scoped authenticated REST/WebSocket access, and alert lifecycle actions.
+- Added monitoring, performance, error, anomaly, live, and alert dashboard pages plus setup and limitation documentation.
+
 ### Stage 4 — Breaking Change Detection
 
 - Added deterministic OpenAPI endpoint, parameter, request, response, content-type, enum, constraint, security, and local-reference comparison with compatibility classifications and indicative severity-weighted scores.

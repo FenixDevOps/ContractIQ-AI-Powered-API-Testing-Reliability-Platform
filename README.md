@@ -1,19 +1,22 @@
 # ContractIQ
 
-ContractIQ is a local-first API testing and reliability platform. It includes the Stage 1 foundation, Stage 2 OpenAPI import/version management, Stage 3 contract-driven test generation and opt-in API execution, and Stage 4 deterministic breaking-change detection with persisted compatibility reports. Performance telemetry and AI-driven features are not included.
+ContractIQ is a local-first API testing and reliability platform. It includes the Stage 1 foundation, Stage 2 OpenAPI import/version management, Stage 3 contract-driven test generation and opt-in API execution, Stage 4 deterministic breaking-change detection, and Stage 5 scheduled API monitoring with persisted measurements, alerts, and anomaly detection.
 
 ## Implemented Features
 
 - FastAPI project, health, and versioned status endpoints.
 - Interactive API documentation at `/docs`.
 - Configurable backend CORS and application metadata.
-- Responsive React dashboard with Overview, Projects, API Explorer, Test Runs, Contract Changes, Performance, AI Insights, Alerts, and Settings navigation.
+- Responsive React dashboard with Overview, Projects, API Explorer, Test Runs, Contract Changes, Monitoring, Performance, Errors, AI Insights, Live Monitoring, Alerts, and Settings navigation.
 - The dashboard calls the backend `/health` endpoint and presents loading, connected, disconnected, and retry states.
 - Searchable command palette (`Ctrl+K` / `Cmd+K`), project selector, notifications menu, profile menu, and mobile navigation drawer.
 - API health metrics, trend chart, recent executions, and change panels show explicit empty states until real product data exists.
 - Safe OpenAPI 3.0/3.1 JSON/YAML import, project/specification persistence, endpoint exploration, versions, and structural comparison.
 - OpenAPI-derived API test generation, HTTPX execution against explicitly allowlisted hosts, response validation, persisted test results, and report history.
 - Deterministic OpenAPI compatibility comparisons, severity and compatibility classification, indicative scoring, persisted comparison history, filtering, and JSON report export.
+- Scheduled read-only API probes with host allowlisting, DNS-pinned connections, bounded timeouts/responses, per-environment metrics, and persistent checks.
+- Project-scoped REST/WebSocket monitoring access, database-backed scheduler leases, persistent deduplicated alerts, and process-local live alert delivery.
+- Isolation Forest anomaly detection trained only on collected measurements, with a rule-based warm-up fallback and scores explicitly identified as non-probabilities.
 - Pytest coverage for health, imports, generation, schema validation, HTTPX mock execution, and run history.
 
 ## Technology
@@ -35,9 +38,9 @@ ContractIQ/
 ├── backend/
 │   ├── app/
 │   │   ├── database/            # SQLAlchemy entities, engine, and sessions
-│   │   ├── routes/              # Health, projects, imports, endpoints, and testing APIs
+│   │   ├── routes/              # Health, projects, import, testing, compatibility, monitoring APIs
 │   │   ├── schemas/             # Request and response models
-│   │   ├── services/            # Parsing, validation, comparison, generation, and execution
+│   │   ├── services/            # Parsing, validation, execution, monitoring, metrics, and anomaly detection
 │   │   ├── utils/               # Upload validation
 │   │   ├── config.py            # Environment-driven settings
 │   │   └── main.py              # FastAPI app, CORS, and router registration
@@ -49,7 +52,7 @@ ContractIQ/
 │   ├── src/
 │   │   ├── components/          # Navigation, backend status, and shared UI primitives
 │   │   │   └── ui/button.jsx    # Reusable shadcn-style button variants
-│   │   ├── pages/               # Overview, import/explorer, comparison, and testing screens
+│   │   ├── pages/               # Overview, import/explorer, testing, compatibility, and monitoring screens
 │   │   ├── services/api.js      # Shared backend API client
 │   │   ├── App.jsx              # App shell and page navigation
 │   │   ├── App.css              # Responsive dashboard styling
@@ -65,6 +68,8 @@ ContractIQ/
 │   ├── architecture.md
 │   ├── openapi-import-engine.md
 │   ├── automated-testing-engine.md
+│   ├── breaking-change-detection.md
+│   ├── real-time-monitoring.md
 │   └── development_log.md
 ├── .gitignore                   # Excludes generated and local-only files
 ├── CHANGELOG.md
@@ -101,7 +106,7 @@ python -m alembic upgrade head
 python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000 --env-file .env
 ```
 
-The server reads `CONTRACTIQ_APP_NAME`, `CONTRACTIQ_APP_VERSION`, and `CONTRACTIQ_ALLOWED_ORIGINS` from the backend environment file. Apply Alembic migrations before starting the application. Testing requests are disabled until exact target hosts/ports are allowlisted; DNS results are pinned for each run to prevent rebinding between validation and connection. See [docs/automated-testing-engine.md](docs/automated-testing-engine.md) for safe local setup and SSRF controls.
+The server reads `CONTRACTIQ_*` settings from the backend environment file. Apply Alembic migrations before starting the application. Testing and monitoring requests are disabled until exact target hosts/ports are allowlisted; DNS results are pinned for each run to prevent rebinding between validation and connection. Stage 5 additionally requires a backend monitoring token and an explicit project allowlist; see [docs/real-time-monitoring.md](docs/real-time-monitoring.md) before enabling it.
 
 ## Start the Frontend
 
@@ -260,3 +265,32 @@ Compare two imported OpenAPI versions in **Contract Changes**. The engine analyz
 Apply database changes with `python -m alembic upgrade head` from `backend`. PDF export is not included; use the report's print action to print or save a browser-generated PDF.
 
 See [docs/breaking-change-detection.md](docs/breaking-change-detection.md) for comparison rules, score weights, persistence, API examples, reference handling, test coverage, and limitations.
+
+## Stage 5: Real-Time API Monitoring
+
+Stage 5 adds scheduled, read-only probes for public `GET`, `HEAD`, and `OPTIONS` endpoints, using the existing exact host/port allowlist and DNS-pinned transport. It persists response status, latency, safe error categories, anomalies, and alerts without storing response bodies or headers. The dashboard now includes monitoring setup, availability/latency trends, errors, anomaly explanations, a project alert stream, and alert lifecycle actions.
+
+### Enable Stage 5
+
+1. Apply `python -m alembic upgrade head` from `backend`.
+2. Set `CONTRACTIQ_MONITORING_AUTH_TOKEN` to a random value of at least 32 characters and set `CONTRACTIQ_MONITORING_ALLOWED_PROJECT_IDS` to the UUIDs permitted to use monitoring. An explicit `*` grants the token access to every project; the default empty allowlist denies all project access.
+3. Add each approved target's exact hostname and port to `CONTRACTIQ_TEST_ALLOWED_TARGET_HOSTS` and `CONTRACTIQ_TEST_ALLOWED_TARGET_PORTS`. Private targets remain disabled unless explicitly enabled for development.
+4. Restart the backend, open a Stage 5 page, and enter the token in the access panel. It is held in browser session storage, not embedded in the frontend bundle.
+5. Create a configuration and start it. The scheduler supports intervals from 30 to 3600 seconds, up to 20 endpoints per configuration, and timeouts up to 30 seconds.
+
+### Stage 5 API routes
+
+- `POST /api/v1/projects/{project_id}/monitoring/configurations`
+- `GET /api/v1/projects/{project_id}/monitoring/configurations`
+- `PATCH /api/v1/projects/{project_id}/monitoring/configurations/{configuration_id}`
+- `POST /api/v1/projects/{project_id}/monitoring/configurations/{configuration_id}/start`
+- `POST /api/v1/projects/{project_id}/monitoring/configurations/{configuration_id}/pause`
+- `GET /api/v1/projects/{project_id}/monitoring/overview`
+- `GET /api/v1/projects/{project_id}/monitoring/metrics`
+- `GET /api/v1/projects/{project_id}/monitoring/checks` and `/errors`
+- `GET /api/v1/projects/{project_id}/monitoring/anomalies` and `/anomalies/model`
+- `POST /api/v1/projects/{project_id}/monitoring/anomalies/train`
+- `GET /api/v1/projects/{project_id}/monitoring/alerts`; `PATCH .../alerts/{alert_id}`
+- `WS /ws/v1/projects/{project_id}/monitoring/live`
+
+The shared token/project allowlist is workspace-level access, not per-user identity. Live WebSocket events are delivered only within the current backend process; run a single worker when using the live page. Synthetic probe counts are not actual client-traffic measurements. See [docs/real-time-monitoring.md](docs/real-time-monitoring.md) for security boundaries, model warm-up, data limits, environment filters, and these limitations.
